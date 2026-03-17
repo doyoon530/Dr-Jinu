@@ -14,6 +14,7 @@ import socket
 import json
 import tempfile
 from datetime import datetime
+from difflib import SequenceMatcher
 
 try:
     from waitress import serve
@@ -40,6 +41,9 @@ MAX_HISTORY_TURNS = 12
 MAX_SCORE_HISTORY = 30
 MAX_ANALYSIS_RETRY = 3
 RECENT_WINDOW = 5
+ANALYSIS_CONTEXT_TURNS = 3
+REPETITION_CONTEXT_TURNS = 4
+REPETITION_SCORE_OPTIONS = [0, 8, 15, 20, 25]
 
 RECALL_WORDS = [
     "사과", "버스", "바다", "연필", "시계", "나무", "기차", "고양이",
@@ -57,6 +61,7 @@ turn_store = {}
 answer_chain = None
 analysis_chain = None
 analysis_retry_chain = None
+analysis_repetition_chain = None
 speech_client = None
 temp_google_credentials_path = None
 
@@ -187,6 +192,7 @@ analysis_prompt = ChatPromptTemplate.from_messages(
 설명하지 마십시오.
 
 가능하면 현재 질문뿐 아니라 대화 맥락에서 나타나는 반복 질문이나 기억 혼란 패턴도 함께 고려하여 판단하십시오.
+질문반복점수는 최근 대화에서 같은 의미의 질문이 다시 제시되었는지, 특히 직전 답변 직후 비슷한 질문이 반복되었는지를 우선 확인하여 평가하십시오.
 단일 질문만으로 강한 판단을 내리지 말고 언어적 특징이 명확할 때만 높은 점수를 부여하십시오.
 
 사용자의 질문에 나타난 언어적 특징을 분석하여 치매 의심 징후 점수를 계산하십시오.
@@ -199,6 +205,9 @@ analysis_prompt = ChatPromptTemplate.from_messages(
         (
             "human",
             """
+최근 대화 맥락:
+{conversation_context}
+
 현재 질문: {question}
 
 반드시 아래 형식만 출력하세요.
@@ -230,6 +239,7 @@ analysis_retry_prompt = ChatPromptTemplate.from_messages(
 점수 기준에 따라 다시 분석하고 형식을 정확히 맞추십시오.
 
 가능하면 현재 질문뿐 아니라 대화 맥락에서 나타나는 반복 질문이나 기억 혼란 패턴도 함께 고려하여 판단하십시오.
+질문반복점수는 최근 대화에서 같은 의미의 질문이 다시 제시되었는지, 특히 직전 답변 직후 비슷한 질문이 반복되었는지를 우선 확인하여 평가하십시오.
 단일 질문만으로 강한 판단을 내리지 말고 언어적 특징이 명확할 때만 높은 점수를 부여하십시오.
 
 {ANALYSIS_SCORING_GUIDE}
@@ -240,6 +250,9 @@ analysis_retry_prompt = ChatPromptTemplate.from_messages(
         (
             "human",
             """
+최근 대화 맥락:
+{conversation_context}
+
 현재 질문: {question}
 
 이전 응답:
@@ -260,12 +273,81 @@ analysis_retry_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
+repetition_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+당신은 사용자의 현재 질문이 최근 사용자 질문의 반복인지 판정하는 보조 분석기입니다.
+
+오직 질문 반복 여부만 판단하십시오.
+기억 혼란, 시간 혼란, 문장 비논리성은 여기서 평가하지 마십시오.
+
+판단 규칙:
+- 단어 순서, 조사, 어미가 조금 달라도 핵심 요청이 같으면 같은 의미의 질문일 수 있습니다.
+- "기억이 안 난다", "몇 시지", "몇 시일까"처럼 표현 위치만 달라도 핵심 질문이 같으면 반복으로 판단할 수 있습니다.
+- 같은 주제만 공유하고 실제 요청이 다르면 반복으로 보지 마십시오.
+- 최근 AI 답변 직후 같은 의미 질문이 다시 나오면 더 높은 점수를 줄 수 있습니다.
+
+질문반복점수는 반드시 아래 다섯 값 중 하나만 사용하십시오:
+0, 8, 15, 20, 25
+
+출력 형식:
+질문반복점수:
+반복대상:
+근거:
+"""
+        ),
+        (
+            "human",
+            """
+최근 사용자 질문과 당시 AI 답변:
+{recent_user_questions}
+
+현재 질문:
+{question}
+
+반드시 형식만 출력하세요.
+"""
+        )
+    ]
+)
+
 
 # =========================
 # LLM 로드
 # =========================
 def get_model_path() -> str:
     return os.getenv("MODEL_PATH", DEFAULT_MODEL_PATH)
+
+
+def get_positive_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+
+    try:
+        parsed = int(raw_value)
+        if parsed < 1:
+            raise ValueError
+        return parsed
+    except ValueError:
+        print(f"[config] Invalid {name}={raw_value!r}; using default {default}")
+        return default
+
+
+def get_analysis_n_ctx() -> int:
+    return get_positive_int_env("ANALYSIS_N_CTX", 8192)
+
+
+def get_analysis_max_tokens() -> int:
+    return get_positive_int_env("ANALYSIS_MAX_TOKENS", 384)
+
+
+def get_analysis_n_batch() -> int:
+    n_ctx = get_analysis_n_ctx()
+    requested = get_positive_int_env("ANALYSIS_N_BATCH", 512)
+    return max(64, min(requested, n_ctx))
 
 
 def setup_google_credentials() -> str | None:
@@ -336,9 +418,9 @@ def get_or_create_answer_chain():
 
 
 def get_or_create_analysis_chains():
-    global analysis_chain, analysis_retry_chain
+    global analysis_chain, analysis_retry_chain, analysis_repetition_chain
 
-    if analysis_chain is not None and analysis_retry_chain is not None:
+    if analysis_chain is not None and analysis_retry_chain is not None and analysis_repetition_chain is not None:
         return analysis_chain, analysis_retry_chain
 
     model_path = get_model_path()
@@ -351,14 +433,25 @@ def get_or_create_analysis_chains():
         model_path=model_path,
         temperature=0.0,
         top_p=0.9,
-        max_tokens=256,
-        n_ctx=4096,
+        max_tokens=get_analysis_max_tokens(),
+        n_ctx=get_analysis_n_ctx(),
+        n_batch=get_analysis_n_batch(),
         verbose=False,
     )
 
     analysis_chain = LLMChain(prompt=analysis_prompt, llm=analysis_llm)
     analysis_retry_chain = LLMChain(prompt=analysis_retry_prompt, llm=analysis_llm)
+    analysis_repetition_chain = LLMChain(prompt=repetition_prompt, llm=analysis_llm)
     return analysis_chain, analysis_retry_chain
+
+
+def get_or_create_repetition_chain():
+    global analysis_repetition_chain
+
+    if analysis_repetition_chain is None:
+        get_or_create_analysis_chains()
+
+    return analysis_repetition_chain
 
 
 def get_or_create_speech_client():
@@ -439,6 +532,347 @@ def add_to_history(session_id: str, role: str, content: str) -> None:
         conversation_store[session_id] = conversation_store[session_id][-max_messages:]
 
 
+def build_analysis_context(session_id: str | None, max_turns: int = ANALYSIS_CONTEXT_TURNS) -> str:
+    if not session_id:
+        return "이전 대화 없음"
+
+    turns = turn_store.get(session_id, [])
+    if not turns:
+        return "이전 대화 없음"
+
+    recent_turns = turns[-max_turns:]
+    context_lines = []
+
+    for index, turn in enumerate(recent_turns, start=1):
+        user_text = normalize_text(turn.get("user_text", ""))
+        answer_text = normalize_text(turn.get("answer", ""))
+
+        if not user_text and not answer_text:
+            continue
+
+        context_lines.append(f"[이전 대화 {index}]")
+
+        if user_text:
+            context_lines.append(f"사용자: {user_text}")
+
+        if answer_text:
+            context_lines.append(f"AI: {answer_text}")
+
+    if not context_lines:
+        return "이전 대화 없음"
+
+    return "\n".join(context_lines)
+
+
+def get_recent_user_turns(turns, max_turns: int = REPETITION_CONTEXT_TURNS):
+    if not turns:
+        return []
+
+    recent_turns = []
+    for turn in turns:
+        user_text = normalize_text(turn.get("user_text", ""))
+        if not user_text:
+            continue
+
+        recent_turns.append({
+            "user_text": user_text,
+            "answer": normalize_text(turn.get("answer", ""))
+        })
+
+    if len(recent_turns) > max_turns:
+        recent_turns = recent_turns[-max_turns:]
+
+    return recent_turns
+
+
+def normalize_similarity_text(text: str) -> str:
+    normalized = normalize_text(text).lower()
+    normalized = re.sub(r"[^0-9a-z가-힣\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def compact_similarity_text(text: str) -> str:
+    return re.sub(r"\s+", "", normalize_similarity_text(text))
+
+
+def tokenize_similarity_text(text: str):
+    normalized = normalize_similarity_text(text)
+    return [token for token in normalized.split() if len(token) >= 2]
+
+
+def build_char_ngrams(text: str, n: int = 2):
+    compact = compact_similarity_text(text)
+    if not compact:
+        return set()
+    if len(compact) < n:
+        return {compact}
+
+    return {
+        compact[index:index + n]
+        for index in range(len(compact) - n + 1)
+    }
+
+
+def calculate_overlap_ratio(left_values, right_values) -> float:
+    left_set = set(left_values)
+    right_set = set(right_values)
+
+    if not left_set or not right_set:
+        return 0.0
+
+    return len(left_set & right_set) / max(len(left_set), len(right_set))
+
+
+def calculate_question_similarity(previous_question: str, current_question: str) -> dict:
+    previous_compact = compact_similarity_text(previous_question)
+    current_compact = compact_similarity_text(current_question)
+
+    char_ratio = 0.0
+    if previous_compact and current_compact:
+        char_ratio = SequenceMatcher(None, previous_compact, current_compact).ratio()
+
+    token_overlap = calculate_overlap_ratio(
+        tokenize_similarity_text(previous_question),
+        tokenize_similarity_text(current_question)
+    )
+    ngram_overlap = calculate_overlap_ratio(
+        build_char_ngrams(previous_question),
+        build_char_ngrams(current_question)
+    )
+
+    return {
+        "char_ratio": round(char_ratio, 4),
+        "token_overlap": round(token_overlap, 4),
+        "ngram_overlap": round(ngram_overlap, 4),
+    }
+
+
+def normalize_repetition_score(score: int) -> int:
+    try:
+        parsed = int(score)
+    except (TypeError, ValueError):
+        return 0
+
+    return min(REPETITION_SCORE_OPTIONS, key=lambda option: (abs(option - parsed), option))
+
+
+def trim_reason_question(text: str, max_length: int = 42) -> str:
+    normalized = normalize_text(text)
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[:max_length - 1]}…"
+
+
+def infer_repetition_score_from_similarity(metrics: dict, is_immediate: bool) -> int:
+    char_ratio = float(metrics.get("char_ratio", 0.0))
+    token_overlap = float(metrics.get("token_overlap", 0.0))
+    ngram_overlap = float(metrics.get("ngram_overlap", 0.0))
+
+    if char_ratio >= 0.9 or (token_overlap >= 0.8 and ngram_overlap >= 0.78):
+        return 25 if is_immediate else 20
+
+    if char_ratio >= 0.82 or (token_overlap >= 0.68 and ngram_overlap >= 0.64):
+        return 20 if is_immediate else 15
+
+    if char_ratio >= 0.72 or (token_overlap >= 0.54 and ngram_overlap >= 0.5):
+        return 8
+
+    return 0
+
+
+def build_repetition_reason(score: int, matched_question: str, is_immediate: bool) -> str:
+    if score <= 0:
+        return ""
+
+    reference = trim_reason_question(matched_question)
+    if score >= 25:
+        return f"직전 질문 '{reference}'과 사실상 같은 의미의 질문이 답변 직후 다시 제시되어 질문 반복 경향이 매우 강하게 관찰됩니다."
+    if score >= 20:
+        return f"직전 질문 '{reference}'과 현재 질문의 핵심 요청이 거의 같아 질문 반복 경향이 뚜렷하게 관찰됩니다."
+    if score >= 15:
+        return f"이전 질문 '{reference}'과 현재 질문의 의미가 유사해 같은 질문이 다시 제시된 것으로 볼 수 있습니다."
+    return f"이전 질문 '{reference}'과 표현이 일부 겹쳐 질문 반복 가능성이 약하게 관찰됩니다."
+
+
+def build_repetition_context(previous_turns) -> str:
+    if not previous_turns:
+        return "이전 사용자 질문 없음"
+
+    context_lines = []
+    for index, turn in enumerate(previous_turns, start=1):
+        user_text = normalize_text(turn.get("user_text", ""))
+        answer_text = normalize_text(turn.get("answer", ""))
+        if not user_text:
+            continue
+
+        context_lines.append(f"[이전 사용자 질문 {index}] {user_text}")
+        if answer_text:
+            context_lines.append(f"[당시 AI 답변 {index}] {answer_text}")
+
+    if not context_lines:
+        return "이전 사용자 질문 없음"
+
+    return "\n".join(context_lines)
+
+
+def analyze_repetition_by_similarity(question: str, previous_turns) -> dict:
+    normalized_question = normalize_text(question)
+    if not normalized_question or not previous_turns:
+        return {
+            "score": 0,
+            "matched_question": "",
+            "reason": "",
+            "source": "heuristic",
+        }
+
+    best_result = {
+        "score": 0,
+        "matched_question": "",
+        "reason": "",
+        "source": "heuristic",
+    }
+
+    total_turns = len(previous_turns)
+    for index, turn in enumerate(previous_turns):
+        previous_question = normalize_text(turn.get("user_text", ""))
+        if not previous_question:
+            continue
+
+        metrics = calculate_question_similarity(previous_question, normalized_question)
+        is_immediate = index == total_turns - 1
+        score = infer_repetition_score_from_similarity(metrics, is_immediate=is_immediate)
+
+        if score < best_result["score"]:
+            continue
+
+        if score == best_result["score"] and score > 0:
+            current_char_ratio = metrics["char_ratio"]
+            best_char_ratio = float(best_result.get("char_ratio", 0.0))
+            if current_char_ratio <= best_char_ratio and not is_immediate:
+                continue
+
+        best_result = {
+            "score": score,
+            "matched_question": previous_question,
+            "reason": build_repetition_reason(score, previous_question, is_immediate),
+            "source": "heuristic",
+            "char_ratio": metrics["char_ratio"],
+        }
+
+    best_result.pop("char_ratio", None)
+    return best_result
+
+
+def parse_repetition_chain_response(response_text: str) -> dict:
+    cleaned = str(response_text or "").strip()
+    if not cleaned:
+        return {
+            "score": 0,
+            "matched_question": "",
+            "reason": "",
+            "source": "llm",
+        }
+
+    score_match = re.search(r"질문반복점수\s*[:：]?\s*(\d+)", cleaned)
+    target_match = re.search(r"반복대상\s*[:：]?\s*(.+?)(?:\n|$)", cleaned)
+    reason_match = re.search(r"근거\s*[:：]?\s*(.+)", cleaned, re.DOTALL)
+
+    score = normalize_repetition_score(score_match.group(1) if score_match else 0)
+    matched_question = normalize_text(target_match.group(1) if target_match else "")
+    reason = normalize_text(reason_match.group(1) if reason_match else "")
+
+    if matched_question in {"없음", "해당 없음", "없습니다"}:
+        matched_question = ""
+
+    return {
+        "score": score,
+        "matched_question": matched_question,
+        "reason": reason,
+        "source": "llm",
+    }
+
+
+def merge_repetition_reason(existing_reason: str, repetition_reason: str) -> str:
+    normalized_existing = normalize_text(existing_reason)
+    normalized_repetition = normalize_text(repetition_reason)
+
+    if not normalized_repetition:
+        return normalized_existing
+    if not normalized_existing:
+        return normalized_repetition
+    if normalized_repetition in normalized_existing:
+        return normalized_existing
+
+    return f"{normalized_repetition} {normalized_existing}"
+
+
+def detect_repetition_signal(question: str, previous_turns, use_llm: bool = True) -> dict:
+    heuristic_result = analyze_repetition_by_similarity(question, previous_turns)
+    best_result = dict(heuristic_result)
+
+    if not use_llm or not previous_turns:
+        return best_result
+
+    try:
+        repetition_chain = get_or_create_repetition_chain()
+        response = repetition_chain.invoke({
+            "recent_user_questions": build_repetition_context(previous_turns),
+            "question": normalize_text(question),
+        })
+        llm_result = parse_repetition_chain_response(response.get("text", ""))
+
+        if llm_result["score"] > best_result["score"]:
+            best_result = llm_result
+        elif llm_result["score"] == best_result["score"]:
+            if not best_result.get("matched_question") and llm_result.get("matched_question"):
+                best_result["matched_question"] = llm_result["matched_question"]
+            if len(llm_result.get("reason", "")) > len(best_result.get("reason", "")):
+                best_result["reason"] = llm_result["reason"]
+                best_result["source"] = llm_result["source"]
+    except Exception as e:
+        print(f"[질문 반복 전용 판별 실패] {e}")
+
+    if best_result["score"] > 0 and not best_result.get("reason"):
+        matched_question = best_result.get("matched_question") or heuristic_result.get("matched_question", "")
+        best_result["reason"] = build_repetition_reason(
+            best_result["score"],
+            matched_question,
+            matched_question == normalize_text(previous_turns[-1].get("user_text", "")) if previous_turns else False
+        )
+
+    if not best_result.get("matched_question"):
+        best_result["matched_question"] = heuristic_result.get("matched_question", "")
+
+    return best_result
+
+
+def apply_repetition_guardrail(question: str, fields: dict, previous_turns) -> dict:
+    if not fields or not previous_turns:
+        return fields
+
+    repetition_signal = detect_repetition_signal(question, previous_turns, use_llm=True)
+    current_repetition = clamp_subscore(int(fields["feature_scores"].get("repetition", 0)), 25)
+    boosted_repetition = max(current_repetition, repetition_signal.get("score", 0))
+
+    if boosted_repetition <= current_repetition:
+        return fields
+
+    fields["feature_scores"]["repetition"] = boosted_repetition
+    fields["score"] = clamp_score(
+        boosted_repetition
+        + int(fields["feature_scores"].get("memory", 0))
+        + int(fields["feature_scores"].get("time_confusion", 0))
+        + int(fields["feature_scores"].get("incoherence", 0))
+    )
+
+    if fields.get("judgment") != "판단 어려움":
+        fields["judgment"] = infer_judgment_from_score(fields["score"])
+
+    fields["reason"] = merge_repetition_reason(fields.get("reason", ""), repetition_signal.get("reason", ""))
+    return fields
+
+
 def add_turn_history(
     session_id: str,
     user_text: str,
@@ -517,7 +951,7 @@ def repair_session_analysis_history(session_id: str) -> None:
     existing_scores = score_store.get(session_id, [])
     running_scores = []
 
-    for turn in turns:
+    for index, turn in enumerate(turns):
         feature_scores = turn.get("feature_scores") or {}
         repaired_feature_scores = {
             "repetition": clamp_subscore(int(feature_scores.get("repetition", 0)), 25),
@@ -525,6 +959,11 @@ def repair_session_analysis_history(session_id: str) -> None:
             "time_confusion": clamp_subscore(int(feature_scores.get("time_confusion", 0)), 30),
             "incoherence": clamp_subscore(int(feature_scores.get("incoherence", 0)), 20),
         }
+
+        previous_turns = get_recent_user_turns(turns[:index])
+        repetition_signal = detect_repetition_signal(turn.get("user_text", ""), previous_turns, use_llm=False)
+        if repetition_signal["score"] > repaired_feature_scores["repetition"]:
+            repaired_feature_scores["repetition"] = repetition_signal["score"]
 
         current_score = clamp_score(int(turn.get("score", 0)))
         current_subtotal = sum(repaired_feature_scores.values())
@@ -561,7 +1000,8 @@ def repair_session_analysis_history(session_id: str) -> None:
             turn.get("reason", ""),
             repaired_feature_scores
         ))
-        turn["reason"] = normalize_reason_text(turn.get("reason", ""), repaired_feature_scores)
+        normalized_reason = normalize_reason_text(turn.get("reason", ""), repaired_feature_scores)
+        turn["reason"] = merge_repetition_reason(normalized_reason, repetition_signal.get("reason", ""))
 
         if score_included:
             turn["confidence"] = calculate_confidence_from_feature_scores(repaired_feature_scores, current_score)
@@ -1162,7 +1602,11 @@ def extract_analysis_fields(response_text: str) -> dict:
     }
 
 
-def generate_analysis_with_retry(question: str, max_attempts: int = MAX_ANALYSIS_RETRY) -> str:
+def generate_analysis_with_retry(
+    question: str,
+    conversation_context: str = "이전 대화 없음",
+    max_attempts: int = MAX_ANALYSIS_RETRY
+) -> str:
     previous_response = ""
     primary_chain, retry_chain = get_or_create_analysis_chains()
 
@@ -1170,10 +1614,12 @@ def generate_analysis_with_retry(question: str, max_attempts: int = MAX_ANALYSIS
         try:
             if attempt == 0:
                 response = primary_chain.invoke({
+                    "conversation_context": conversation_context,
                     "question": question
                 })
             else:
                 response = retry_chain.invoke({
+                    "conversation_context": conversation_context,
                     "question": question,
                     "previous_response": previous_response
                 })
@@ -1349,7 +1795,7 @@ def generate_answer_result(question: str) -> dict:
         return build_error_result()
 
 
-def generate_analysis_result(question: str) -> dict:
+def generate_analysis_result(question: str, session_id: str | None = None) -> dict:
     question = normalize_text(question)
 
     if not validate_user_text(question):
@@ -1363,8 +1809,11 @@ def generate_analysis_result(question: str) -> dict:
             "excluded_reason": short_input_result["excluded_reason"],
         }
 
-    analysis_text = generate_analysis_with_retry(question)
+    analysis_context = build_analysis_context(session_id)
+    analysis_text = generate_analysis_with_retry(question, conversation_context=analysis_context)
     fields = extract_analysis_fields(analysis_text)
+    previous_turns = get_recent_user_turns(turn_store.get(session_id, []))
+    fields = apply_repetition_guardrail(question, fields, previous_turns)
     fields["score_included"] = should_include_analysis_score(
         fields["judgment"],
         fields["score"],
@@ -1379,13 +1828,13 @@ def generate_analysis_result(question: str) -> dict:
     return fields
 
 
-def get_response_from_llama(question: str) -> dict:
+def get_response_from_llama(question: str, session_id: str | None = None) -> dict:
     answer_result = generate_answer_result(question)
 
     if all(key in answer_result for key in ["full_text", "judgment", "score", "reason", "feature_scores"]):
         return answer_result
 
-    fields = generate_analysis_result(question)
+    fields = generate_analysis_result(question, session_id=session_id)
     full_text = build_full_text(answer_result["answer"], fields)
 
     return {
@@ -1591,7 +2040,7 @@ def analyze_text():
 
         recall_feedback = evaluate_recall_answer(session_id, user_input)
         answer_result = {"answer": precomputed_answer} if precomputed_answer else generate_answer_result(user_input)
-        fields = generate_analysis_result(user_input)
+        fields = generate_analysis_result(user_input, session_id=session_id)
 
         result = {
             "answer": answer_result.get("answer", ""),
@@ -1716,7 +2165,7 @@ def chat():
                 )
 
         recall_feedback = evaluate_recall_answer(session_id, user_input)
-        result = get_response_from_llama(user_input)
+        result = get_response_from_llama(user_input, session_id=session_id)
 
         if recall_feedback:
             result["answer"] = f"{result['answer']}\n\n{recall_feedback}"
