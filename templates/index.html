@@ -25,6 +25,13 @@
     <div class="layout">
         <aside class="sidebar glass-panel">
             <div class="sidebar-header">
+                <div class="sidebar-brand">
+                    <div class="sidebar-brand-mark" aria-hidden="true">GNU</div>
+                    <div class="sidebar-brand-copy">
+                        <span>경상국립대학교</span>
+                        <small>Gyeongsang National University</small>
+                    </div>
+                </div>
                 <h2>인지 위험도 모니터링</h2>
                 <p>최근 대화 누적 분석</p>
             </div>
@@ -102,6 +109,20 @@
 
                             <div class="chat-topbar-right" id="systemStateText">
                                 준비 완료
+                            </div>
+                        </div>
+
+                        <div class="process-panel">
+                            <div class="process-head">
+                                <span class="process-title">처리 단계</span>
+                                <span class="process-detail" id="processDetail">대기 중</span>
+                            </div>
+                            <div class="process-steps" id="processSteps">
+                                <div class="process-step" data-step="capture">음성 수신</div>
+                                <div class="process-step" data-step="stt">음성 인식</div>
+                                <div class="process-step" data-step="answer">답변 생성</div>
+                                <div class="process-step" data-step="analysis">위험도 분석</div>
+                                <div class="process-step" data-step="render">화면 반영</div>
                             </div>
                         </div>
 
