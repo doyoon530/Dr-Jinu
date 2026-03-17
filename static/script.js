@@ -231,10 +231,12 @@ async function startRecording() {
 
                 setSystemState("분석 완료");
 
-                if ((data.score ?? 0) >= 60 || (data.recent_average_score ?? 0) >= 60) {
-                    showWarningPopup(
-                        `현재 점수 ${data.score ?? 0}점, 최근 5회 평균 ${data.recent_average_score ?? 0}점으로 위험 구간에 해당합니다.`
-                    );
+                const scoreIncluded = isScoreIncluded(data);
+                if ((scoreIncluded && (data.score ?? 0) >= 60) || (data.recent_average_score ?? 0) >= 60) {
+                    const warningText = scoreIncluded
+                        ? `현재 점수 ${data.score ?? 0}점, 최근 5회 평균 ${data.recent_average_score ?? 0}점으로 위험 구간에 해당합니다.`
+                        : `이번 분석은 점수 통계에서 제외되었고, 최근 5회 평균 ${data.recent_average_score ?? 0}점이 위험 구간에 해당합니다.`;
+                    showWarningPopup(warningText);
                 }
             } catch (error) {
                 console.error(error);
@@ -291,7 +293,7 @@ async function resetHistory() {
         resetAnalysisCard();
         updateFeatureBreakdown({});
         updateRecallCard(data.recall || {});
-        updateConfidence({}, 0);
+        updateConfidence({}, 0, false);
         renderAll(data);
 
         setSystemState("기록 초기화 완료");
@@ -450,7 +452,7 @@ async function loadScoreHistory() {
         turnHistory = Array.isArray(data.turn_history) ? data.turn_history : [];
         updateRecallCard(data.recall || {});
         renderAll(data);
-        updateConfidence({}, 0);
+        updateConfidence({}, 0, false);
 
         if (turnHistory.length > 0) {
             renderTurnHistory(turnHistory);
@@ -467,11 +469,30 @@ async function loadScoreHistory() {
     }
 }
 
+function isScoreIncluded(data) {
+    return data?.score_included !== false;
+}
+
+function setAnalysisScoreDisplay(score, scoreIncluded = true) {
+    if (!analysisScoreEl) {
+        return;
+    }
+
+    analysisScoreEl.innerText = scoreIncluded ? String(score ?? 0) : "-";
+}
+
 function updateAnalysisCard(data) {
+    const scoreIncluded = isScoreIncluded(data);
+    const riskLabel = scoreIncluded ? (data.risk_level || "Normal") : "반영 제외";
+    const trendLabel = scoreIncluded ? (data.trend || "데이터 부족") : "반영 제외";
+    const reasonText = scoreIncluded
+        ? (data.reason || "분석 근거가 없습니다.")
+        : (data.excluded_reason || data.reason || "이번 분석은 점수 통계에서 제외되었습니다.");
+
     if (analysisJudgmentEl) analysisJudgmentEl.innerText = data.judgment || "없음";
-    if (analysisRiskLevelEl) analysisRiskLevelEl.innerText = data.risk_level || "Normal";
-    if (analysisTrendEl) analysisTrendEl.innerText = data.trend || "데이터 부족";
-    if (analysisReasonEl) analysisReasonEl.innerText = data.reason || "분석 근거가 없습니다.";
+    if (analysisRiskLevelEl) analysisRiskLevelEl.innerText = riskLabel;
+    if (analysisTrendEl) analysisTrendEl.innerText = trendLabel;
+    if (analysisReasonEl) analysisReasonEl.innerText = reasonText;
 }
 
 function resetAnalysisCard() {
@@ -480,6 +501,7 @@ function resetAnalysisCard() {
     if (analysisRiskLevelEl) analysisRiskLevelEl.innerText = "Normal";
     if (analysisTrendEl) analysisTrendEl.innerText = "데이터 부족";
     if (analysisReasonEl) analysisReasonEl.innerText = "아직 분석 결과가 없습니다.";
+    if (confidenceScoreEl) confidenceScoreEl.innerText = "-";
 }
 
 function setSelectedMessageState(turnId) {
@@ -499,18 +521,22 @@ function applyTurnAnalysis(turn) {
         return;
     }
 
+    const scoreIncluded = isScoreIncluded(turn);
     updateAnalysisCard({
         judgment: turn.judgment,
         risk_level: turn.risk_level || "Normal",
         trend: turn.trend || "데이터 부족",
-        reason: turn.reason || "분석 근거가 없습니다."
+        reason: turn.reason || "분석 근거가 없습니다.",
+        score_included: scoreIncluded,
+        excluded_reason: turn.excluded_reason || ""
     });
     updateFeatureBreakdown(turn.feature_scores || {});
-    updateConfidence(turn.feature_scores || {}, turn.score ?? 0);
-
-    if (analysisScoreEl) {
-        analysisScoreEl.innerText = String(turn.score ?? 0);
-    }
+    updateConfidence(
+        scoreIncluded ? (turn.feature_scores || {}) : {},
+        scoreIncluded ? (turn.score ?? 0) : 0,
+        scoreIncluded
+    );
+    setAnalysisScoreDisplay(turn.score, scoreIncluded);
 }
 
 function selectTurnById(turnId, options = {}) {
@@ -607,18 +633,25 @@ function calculateConfidenceValue(featureScores, totalScore) {
     return Math.max(0, Math.min(95, confidence));
 }
 
-function updateConfidence(featureScores, totalScore) {
+function updateConfidence(featureScores, totalScore, shouldDisplay = true) {
+    if (!confidenceScoreEl) {
+        return;
+    }
+
+    if (!shouldDisplay) {
+        confidenceScoreEl.innerText = "-";
+        return;
+    }
+
     const confidence = calculateConfidenceValue(featureScores, totalScore);
 
-    if (confidenceScoreEl) {
-        animateNumber(
-            confidenceScoreEl,
-            extractNumber(confidenceScoreEl.innerText),
-            confidence,
-            750,
-            true
-        );
-    }
+    animateNumber(
+        confidenceScoreEl,
+        extractNumber(confidenceScoreEl.innerText),
+        confidence,
+        750,
+        true
+    );
 }
 
 function revealSummaryNumbers(data) {
@@ -627,7 +660,10 @@ function revealSummaryNumbers(data) {
     const latestScore = scoreHistory.length > 0
         ? scoreHistory[scoreHistory.length - 1].score
         : 0;
-    const confidenceValue = calculateConfidenceValue(data.feature_scores || {}, data.score ?? 0);
+    const scoreIncluded = isScoreIncluded(data);
+    const confidenceValue = scoreIncluded
+        ? calculateConfidenceValue(data.feature_scores || {}, data.score ?? 0)
+        : 0;
 
     if (avgScoreEl) {
         animateNumber(avgScoreEl, extractNumber(avgScoreEl.innerText), averageScore, 700, false, 1);
@@ -642,10 +678,18 @@ function revealSummaryNumbers(data) {
         animateNumber(gaugeScoreEl, extractNumber(gaugeScoreEl.innerText), Math.round(recentAverageScore), 700, false);
     }
     if (analysisScoreEl) {
-        animateNumber(analysisScoreEl, extractNumber(analysisScoreEl.innerText), Number(data.score ?? 0), 750, false);
+        if (scoreIncluded) {
+            animateNumber(analysisScoreEl, extractNumber(analysisScoreEl.innerText), Number(data.score ?? 0), 750, false);
+        } else {
+            analysisScoreEl.innerText = "-";
+        }
     }
     if (confidenceScoreEl) {
-        animateNumber(confidenceScoreEl, extractNumber(confidenceScoreEl.innerText), confidenceValue, 750, true);
+        if (scoreIncluded) {
+            animateNumber(confidenceScoreEl, extractNumber(confidenceScoreEl.innerText), confidenceValue, 750, true);
+        } else {
+            confidenceScoreEl.innerText = "-";
+        }
     }
 }
 
@@ -1036,6 +1080,7 @@ async function requestAnalysisAfterAnswer(recognizedText, answerText) {
 function applyAnalysisResult(data) {
     scoreHistory = Array.isArray(data.score_history) ? data.score_history : [];
     turnHistory = Array.isArray(data.turn_history) ? data.turn_history : turnHistory;
+    const scoreIncluded = isScoreIncluded(data);
 
     updateAnalysisCard(data);
     updateFeatureBreakdown(data.feature_scores || {});
@@ -1059,10 +1104,11 @@ function applyAnalysisResult(data) {
         renderTurnHistory(turnHistory);
     }
 
-    if ((data.score ?? 0) >= 60 || (data.recent_average_score ?? 0) >= 60) {
-        showWarningPopup(
-            `현재 점수 ${data.score ?? 0}점, 최근 5회 평균 ${data.recent_average_score ?? 0}점으로 위험 구간에 해당합니다.`
-        );
+    if ((scoreIncluded && (data.score ?? 0) >= 60) || (data.recent_average_score ?? 0) >= 60) {
+        const warningText = scoreIncluded
+            ? `현재 점수 ${data.score ?? 0}점, 최근 5회 평균 ${data.recent_average_score ?? 0}점으로 위험 구간에 해당합니다.`
+            : `이번 분석은 점수 통계에서 제외되었고, 최근 5회 평균 ${data.recent_average_score ?? 0}점이 위험 구간에 해당합니다.`;
+        showWarningPopup(warningText);
     }
 }
 
