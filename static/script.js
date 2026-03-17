@@ -4,6 +4,8 @@ let audioChunks = [];
 let sessionId = localStorage.getItem("session_id") || null;
 
 let scoreHistory = [];
+let turnHistory = [];
+let selectedTurnId = null;
 let scoreChart = null;
 let gaugeChart = null;
 let radarChart = null;
@@ -16,6 +18,8 @@ const chatWindow = document.getElementById("chatWindow");
 const recordingIndicator = document.getElementById("recordingIndicator");
 const aiThinking = document.getElementById("aiThinking");
 const systemStateText = document.getElementById("systemStateText");
+const processDetailEl = document.getElementById("processDetail");
+const processSteps = Array.from(document.querySelectorAll(".process-step"));
 
 const avgScoreEl = document.getElementById("avgScore");
 const recentAvgScoreEl = document.getElementById("recentAvgScore");
@@ -49,8 +53,11 @@ const warningPopup = document.getElementById("warningPopup");
 const warningPopupText = document.getElementById("warningPopupText");
 const closeWarningPopupButton = document.getElementById("closeWarningPopup");
 
+const processStepOrder = ["capture", "stt", "answer", "analysis", "render"];
+
 document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
+    resetProcessState("대기 중");
     await loadScoreHistory();
 });
 
@@ -59,6 +66,62 @@ function bindEvents() {
     if (stopButton) stopButton.onclick = stopRecording;
     if (resetButton) resetButton.onclick = resetHistory;
     if (closeWarningPopupButton) closeWarningPopupButton.onclick = hideWarningPopup;
+}
+
+function setThinkingMessage(text) {
+    if (aiThinking) {
+        aiThinking.innerText = text;
+    }
+}
+
+function setProcessState(step, detail = "") {
+    const activeIndex = processStepOrder.indexOf(step);
+
+    processSteps.forEach((element) => {
+        const currentStep = element.dataset.step;
+        const currentIndex = processStepOrder.indexOf(currentStep);
+
+        element.classList.remove("is-active", "is-complete", "is-error");
+
+        if (activeIndex === -1) {
+            return;
+        }
+
+        if (currentIndex < activeIndex) {
+            element.classList.add("is-complete");
+        } else if (currentIndex === activeIndex) {
+            element.classList.add("is-active");
+        }
+    });
+
+    if (processDetailEl) {
+        processDetailEl.innerText = detail || "처리 중";
+    }
+}
+
+function setProcessError(detail) {
+    processSteps.forEach((element) => {
+        element.classList.remove("is-active");
+    });
+
+    const active = processSteps.find((element) => element.classList.contains("is-complete") === false);
+    if (active) {
+        active.classList.add("is-error");
+    }
+
+    if (processDetailEl) {
+        processDetailEl.innerText = detail || "오류 발생";
+    }
+}
+
+function resetProcessState(detail = "대기 중") {
+    processSteps.forEach((element) => {
+        element.classList.remove("is-active", "is-complete", "is-error");
+    });
+
+    if (processDetailEl) {
+        processDetailEl.innerText = detail;
+    }
 }
 
 async function startRecording() {
@@ -76,6 +139,9 @@ async function startRecording() {
 
             try {
                 setSystemState("음성 인식 중...");
+                setProcessState("capture", "음성 데이터를 서버로 전송하고 있습니다.");
+                setSystemState("음성 처리 시작");
+                setThinkingMessage("AI 분석 준비 중...");
                 setAnalysisThinking(true);
                 setAnalysisLoadingState(true);
 
@@ -216,6 +282,8 @@ async function resetHistory() {
         }
 
         scoreHistory = [];
+        turnHistory = [];
+        selectedTurnId = null;
         if (chatWindow) {
             chatWindow.innerHTML = "";
         }
@@ -306,9 +374,9 @@ function setAnalysisLoadingState(isLoading) {
     setSkeletonLoading(isLoading);
 }
 
-function appendChatMessage(type, text) {
+function appendChatMessage(type, text, options = {}) {
     if (!chatWindow) {
-        return;
+        return null;
     }
 
     const message = document.createElement("div");
@@ -321,8 +389,18 @@ function appendChatMessage(type, text) {
     }
 
     message.innerText = text;
+
+    if (options.turnId) {
+        message.dataset.turnId = options.turnId;
+        message.classList.add("history-message");
+        message.addEventListener("click", () => {
+            selectTurnById(options.turnId);
+        });
+    }
+
     chatWindow.appendChild(message);
     scrollChatToBottom();
+    return message;
 }
 
 function appendLoadingMessage(text = "답변 생성 중...") {
@@ -369,9 +447,14 @@ async function loadScoreHistory() {
         }
 
         scoreHistory = Array.isArray(data.score_history) ? data.score_history : [];
+        turnHistory = Array.isArray(data.turn_history) ? data.turn_history : [];
         updateRecallCard(data.recall || {});
         renderAll(data);
         updateConfidence({}, 0);
+
+        if (turnHistory.length > 0) {
+            renderTurnHistory(turnHistory);
+        }
     } catch (error) {
         console.error("점수 기록 로딩 실패:", error);
         renderAll({
@@ -397,6 +480,75 @@ function resetAnalysisCard() {
     if (analysisRiskLevelEl) analysisRiskLevelEl.innerText = "Normal";
     if (analysisTrendEl) analysisTrendEl.innerText = "데이터 부족";
     if (analysisReasonEl) analysisReasonEl.innerText = "아직 분석 결과가 없습니다.";
+}
+
+function setSelectedMessageState(turnId) {
+    const messages = Array.from(document.querySelectorAll(".history-message"));
+
+    messages.forEach((message) => {
+        if (message.dataset.turnId === turnId) {
+            message.classList.add("is-selected");
+        } else {
+            message.classList.remove("is-selected");
+        }
+    });
+}
+
+function applyTurnAnalysis(turn) {
+    if (!turn) {
+        return;
+    }
+
+    updateAnalysisCard({
+        judgment: turn.judgment,
+        risk_level: turn.risk_level || "Normal",
+        trend: turn.trend || "데이터 부족",
+        reason: turn.reason || "분석 근거가 없습니다."
+    });
+    updateFeatureBreakdown(turn.feature_scores || {});
+    updateConfidence(turn.feature_scores || {}, turn.score ?? 0);
+
+    if (analysisScoreEl) {
+        analysisScoreEl.innerText = String(turn.score ?? 0);
+    }
+}
+
+function selectTurnById(turnId, options = {}) {
+    const turn = turnHistory.find((item) => item.turn_id === turnId);
+    if (!turn) {
+        return;
+    }
+
+    selectedTurnId = turnId;
+    setSelectedMessageState(turnId);
+    applyTurnAnalysis(turn);
+
+    if (!options.suppressSystemState) {
+        setSystemState("선택한 대화의 분석 결과를 보고 있습니다.");
+    }
+}
+
+function renderTurnHistory(turns) {
+    if (!chatWindow) {
+        return;
+    }
+
+    chatWindow.innerHTML = "";
+
+    turns.forEach((turn) => {
+        appendChatMessage("user", turn.user_text || "", { turnId: turn.turn_id });
+        appendChatMessage("system", turn.answer || "", { turnId: turn.turn_id });
+
+        if (Array.isArray(turn.follow_up_messages)) {
+            turn.follow_up_messages
+                .filter((message) => normalizeText(message))
+                .forEach((message) => appendChatMessage("system", message, { turnId: turn.turn_id }));
+        }
+    });
+
+    if (turns.length > 0) {
+        selectTurnById(turns[turns.length - 1].turn_id, { suppressSystemState: true });
+    }
 }
 
 function updateFeatureBreakdown(featureScores) {
@@ -534,7 +686,7 @@ function getRiskInfo(score) {
             text: "정상",
             desc: "안정적인 상태입니다.",
             cssClass: "risk-safe",
-            color: "#22c55e"
+            color: "#2fd18b"
         };
     }
 
@@ -543,7 +695,7 @@ function getRiskInfo(score) {
             text: "낮은 위험",
             desc: "경미한 변화가 보입니다.",
             cssClass: "risk-low",
-            color: "#60a5fa"
+            color: "#79c9ff"
         };
     }
 
@@ -552,7 +704,7 @@ function getRiskInfo(score) {
             text: "주의",
             desc: "지속 관찰이 필요합니다.",
             cssClass: "risk-warning",
-            color: "#f59e0b"
+            color: "#ffb347"
         };
     }
 
@@ -561,7 +713,7 @@ function getRiskInfo(score) {
             text: "위험",
             desc: "상당한 위험 신호가 있습니다.",
             cssClass: "risk-high",
-            color: "#ef4444"
+            color: "#ff7b7b"
         };
     }
 
@@ -569,7 +721,7 @@ function getRiskInfo(score) {
         text: "매우 위험",
         desc: "즉각적인 관찰이 필요합니다.",
         cssClass: "risk-critical",
-        color: "#991b1b"
+        color: "#ff4f73"
     };
 }
 
@@ -595,7 +747,7 @@ function buildThresholdDataset(value, label) {
     return {
         label: label,
         data: scoreHistory.map(() => value),
-        borderColor: value === 30 ? "rgba(245, 158, 11, 0.55)" : "rgba(239, 68, 68, 0.55)",
+        borderColor: value === 30 ? "rgba(255, 179, 71, 0.5)" : "rgba(255, 79, 115, 0.5)",
         borderWidth: 1,
         borderDash: [6, 6],
         pointRadius: 0,
@@ -649,17 +801,17 @@ function updateLineChart(recentAverageScore) {
             plugins: {
                 legend: {
                     labels: {
-                        color: "#334155"
+                        color: "#d7e3f8"
                     }
                 }
             },
             scales: {
                 x: {
                     ticks: {
-                        color: "#64748b"
+                        color: "#9cb0d3"
                     },
                     grid: {
-                        color: "rgba(148, 163, 184, 0.12)"
+                        color: "rgba(145, 164, 205, 0.12)"
                     }
                 },
                 y: {
@@ -667,10 +819,10 @@ function updateLineChart(recentAverageScore) {
                     max: 100,
                     ticks: {
                         stepSize: 20,
-                        color: "#64748b"
+                        color: "#9cb0d3"
                     },
                     grid: {
-                        color: "rgba(148, 163, 184, 0.12)"
+                        color: "rgba(145, 164, 205, 0.12)"
                     }
                 }
             }
@@ -698,7 +850,7 @@ function updateGaugeChart(recentAverageScore) {
             datasets: [
                 {
                     data: [safeScore, 100 - safeScore],
-                    backgroundColor: [risk.color, "rgba(255, 255, 255, 0.35)"],
+                    backgroundColor: [risk.color, "rgba(255, 255, 255, 0.08)"],
                     borderWidth: 0,
                     circumference: 180,
                     rotation: 270,
@@ -745,10 +897,10 @@ function updateRadarChart(repetition, memory, timeConfusion, incoherence) {
                 {
                     label: "언어 특징 점수",
                     data: [repetition, memory, timeConfusion, incoherence],
-                    borderColor: "#3b82f6",
-                    backgroundColor: "rgba(96, 165, 250, 0.18)",
+                    borderColor: "#d7b26d",
+                    backgroundColor: "rgba(121, 201, 255, 0.14)",
                     borderWidth: 2,
-                    pointBackgroundColor: "#2563eb"
+                    pointBackgroundColor: "#79c9ff"
                 }
             ]
         },
@@ -761,16 +913,16 @@ function updateRadarChart(repetition, memory, timeConfusion, incoherence) {
                     max: 30,
                     ticks: {
                         backdropColor: "transparent",
-                        color: "#64748b"
+                        color: "#9cb0d3"
                     },
                     grid: {
-                        color: "rgba(148, 163, 184, 0.18)"
+                        color: "rgba(145, 164, 205, 0.16)"
                     },
                     angleLines: {
-                        color: "rgba(148, 163, 184, 0.18)"
+                        color: "rgba(145, 164, 205, 0.16)"
                     },
                     pointLabels: {
-                        color: "#334155",
+                        color: "#dce8ff",
                         font: {
                             size: 12
                         }
@@ -780,7 +932,7 @@ function updateRadarChart(repetition, memory, timeConfusion, incoherence) {
             plugins: {
                 legend: {
                     labels: {
-                        color: "#334155"
+                        color: "#d7e3f8"
                     }
                 }
             }
@@ -842,4 +994,212 @@ function hideWarningPopup() {
     }
 
     warningPopup.classList.add("hidden");
+}
+
+async function requestAnswerFirst(recognizedText) {
+    const answerUrl = sessionId
+        ? `/generate-answer?session_id=${encodeURIComponent(sessionId)}`
+        : "/generate-answer";
+
+    const answerResponse = await fetch(answerUrl, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            message: recognizedText
+        })
+    });
+
+    return answerResponse.json();
+}
+
+async function requestAnalysisAfterAnswer(recognizedText, answerText) {
+    const analyzeUrl = sessionId
+        ? `/analyze-text?session_id=${encodeURIComponent(sessionId)}`
+        : "/analyze-text";
+
+    const analyzeResponse = await fetch(analyzeUrl, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            message: recognizedText,
+            answer: answerText
+        })
+    });
+
+    return analyzeResponse.json();
+}
+
+function applyAnalysisResult(data) {
+    scoreHistory = Array.isArray(data.score_history) ? data.score_history : [];
+    turnHistory = Array.isArray(data.turn_history) ? data.turn_history : turnHistory;
+
+    updateAnalysisCard(data);
+    updateFeatureBreakdown(data.feature_scores || {});
+    updateRecallCard(data.recall || {});
+    renderAll(data);
+    revealAnalysisWithCountUp(data);
+
+    if (Array.isArray(data.follow_up_messages)) {
+        data.follow_up_messages
+            .filter((message) => normalizeText(message))
+            .forEach((message) => appendChatMessage("system", message));
+    }
+
+    if (data.turn && data.turn.turn_id) {
+        const existingTurnIndex = turnHistory.findIndex((item) => item.turn_id === data.turn.turn_id);
+        if (existingTurnIndex >= 0) {
+            turnHistory[existingTurnIndex] = data.turn;
+        } else {
+            turnHistory.push(data.turn);
+        }
+        renderTurnHistory(turnHistory);
+    }
+
+    if ((data.score ?? 0) >= 60 || (data.recent_average_score ?? 0) >= 60) {
+        showWarningPopup(
+            `현재 점수 ${data.score ?? 0}점, 최근 5회 평균 ${data.recent_average_score ?? 0}점으로 위험 구간에 해당합니다.`
+        );
+    }
+}
+
+async function handleRecognizedTextFlow(recognizedText) {
+    appendChatMessage("user", recognizedText);
+    appendLoadingMessage("응답 생성 중...");
+    setProcessState("stt", "음성 인식이 마무리되었고, 응답은 LLM에서 생성 중입니다.");
+    setSystemState("응답 생성 중...");
+    setThinkingMessage("응답을 LLM이 생성 중...");
+
+    const answerData = await requestAnswerFirst(recognizedText);
+
+    if (answerData.error) {
+        removeLoadingMessage();
+        appendChatMessage("system", answerData.error);
+        setSystemState("오류 발생");
+        setProcessError("응답 생성 중 문제가 발생했습니다.");
+        setAnalysisThinking(false);
+        setAnalysisLoadingState(false);
+        return;
+    }
+
+    if (answerData.session_id) {
+        sessionId = answerData.session_id;
+        localStorage.setItem("session_id", sessionId);
+    }
+
+    removeLoadingMessage();
+    appendChatMessage("system", answerData.answer || "");
+
+    setProcessState("answer", "응답을 먼저 보여주고, 위험도 분석은 다음 단계로 진행합니다.");
+    setSystemState("위험도 분석 중...");
+    setThinkingMessage("분석용 LLM으로 언어 특징과 점수를 계산 중...");
+
+    const data = await requestAnalysisAfterAnswer(recognizedText, answerData.answer || "");
+
+    if (data.error) {
+        appendChatMessage("system", data.error);
+        setSystemState("오류 발생");
+        setProcessError("위험도 분석 중 문제가 발생했습니다.");
+        setAnalysisThinking(false);
+        setAnalysisLoadingState(false);
+        return;
+    }
+
+    if (data.session_id) {
+        sessionId = data.session_id;
+        localStorage.setItem("session_id", sessionId);
+    }
+
+    setProcessState("analysis", "카드와 차트에서 분석 결과를 반영 중...");
+    applyAnalysisResult(data);
+    setProcessState("render", "답변과 분석 표시가 모두 완료되었습니다.");
+    setSystemState("분석 완료");
+    setThinkingMessage("AI 언어 패턴 분석 중...");
+}
+
+async function startRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        mediaRecorder = new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable = function (event) {
+            audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async function () {
+            setRecordingState(false);
+
+            try {
+                setProcessState("capture", "음성 데이터를 서버로 보내고 있습니다.");
+                setSystemState("음성 처리 시작");
+                setThinkingMessage("AI 분석 준비 중...");
+                setAnalysisThinking(true);
+                setAnalysisLoadingState(true);
+
+                const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
+                const formData = new FormData();
+                formData.append("audio", audioBlob, "recording.wav");
+
+                const transcribeUrl = sessionId
+                    ? `/transcribe-audio?session_id=${encodeURIComponent(sessionId)}`
+                    : "/transcribe-audio";
+
+                const sttResponse = await fetch(transcribeUrl, {
+                    method: "POST",
+                    body: formData
+                });
+
+                const sttData = await sttResponse.json();
+
+                if (sttData.error) {
+                    appendChatMessage("system", sttData.error);
+                    setSystemState("?ㅻ쪟 諛쒖깮");
+                    setProcessError("?뚯꽦 ?몄떇 以?臾몄젣媛 諛쒖깮?덉뒿?덈떎.");
+                    setAnalysisThinking(false);
+                    setAnalysisLoadingState(false);
+                    return;
+                }
+
+                if (sttData.session_id) {
+                    sessionId = sttData.session_id;
+                    localStorage.setItem("session_id", sessionId);
+                }
+
+                const recognizedText = normalizeText(sttData.user_speech || "");
+
+                if (!recognizedText) {
+                    appendChatMessage("system", "?뚯꽦 ?몄떇 寃곌낵媛 ?놁뒿?덈떎. ?ㅼ떆 ?뱀쓬??二쇱꽭??");
+                    setSystemState("?뚯꽦 ?몄떇 ?ㅽ뙣");
+                    setProcessError("?몄떇??臾몄옄媛 ?놁뼱 ?ㅼ쓬 ?④퀎濡??ㅽ뻾?븷 ???놁뒿?덈떎.");
+                    setAnalysisThinking(false);
+                    setAnalysisLoadingState(false);
+                    return;
+                }
+
+                await handleRecognizedTextFlow(recognizedText);
+            } catch (error) {
+                console.error(error);
+                removeLoadingMessage();
+                appendChatMessage("system", "?ㅻ쪟媛 諛쒖깮?덉뒿?덈떎. ?ㅼ떆 ?쒕룄?댁＜?몄슂.");
+                setSystemState("?ㅻ쪟 諛쒖깮");
+                setProcessError("?쟾泥?泥섎━ ?좏젙?먯꽌 ?덈쇅媛 諛쒖깮?덉뒿?덈떎.");
+                setAnalysisThinking(false);
+                setAnalysisLoadingState(false);
+            } finally {
+                audioChunks = [];
+            }
+        };
+
+        mediaRecorder.start();
+        setRecordingState(true);
+        resetProcessState("녹음을 시작했습니다.");
+        setProcessState("capture", "사용자 음성을 수집하고 있습니다.");
+    } catch (error) {
+        console.error(error);
+        alert("留덉씠???묎렐???ㅽ뙣?덉뒿?덈떎.");
+    }
 }
