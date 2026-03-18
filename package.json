@@ -1,0 +1,12 @@
+{
+  "name": "ncai-dementia-risk-monitor",
+  "private": true,
+  "scripts": {
+    "lint": "ruff check app.py && python -m py_compile app.py && prettier --check \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
+    "format": "ruff check --fix app.py && ruff format app.py && prettier --write \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
+    "lint:py": "ruff check app.py && python -m py_compile app.py",
+    "lint:web": "prettier --check \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
+    "format:py": "ruff check --fix app.py && ruff format app.py",
+    "format:web": "prettier --write \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\""
+  }
+}
