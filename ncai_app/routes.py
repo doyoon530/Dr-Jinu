@@ -20,16 +20,20 @@ from .history_service import (
     add_score_history,
     add_to_history,
     add_turn_history,
+    bump_analysis_generation,
     build_chat_response,
     evaluate_recall_answer,
     finalize_analysis_response,
+    get_analysis_generation,
     get_average_score,
     get_or_create_session_id,
+    get_requested_analysis_generation,
     get_recent_average_score,
     get_risk_level_from_score,
     get_score_history,
     get_score_trend,
     get_turn_history,
+    is_current_analysis_generation,
     maybe_advance_recall_test,
     serialize_recall_state,
 )
@@ -49,10 +53,22 @@ turn_store = runtime.turn_store
 
 
 def register_routes(app: Flask) -> None:
+    def build_stale_generation_response(session_id: str, status_code: int = 409):
+        return (
+            jsonify(
+                {
+                    "stale": True,
+                    "error": "초기화 이전 분석 요청이어서 현재 세션에는 반영하지 않습니다.",
+                    "session_id": session_id,
+                    "analysis_generation": get_analysis_generation(session_id),
+                }
+            ),
+            status_code,
+        )
+
     @app.route("/")
     def index():
         return render_template("index.html")
-
 
     @app.route("/health", methods=["GET"])
     def health():
@@ -74,12 +90,15 @@ def register_routes(app: Flask) -> None:
             }
         )
 
-
     @app.route("/transcribe-audio", methods=["POST"])
     def transcribe_audio():
         session_id = get_or_create_session_id()
 
         try:
+            requested_generation = get_requested_analysis_generation()
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
+
             if "audio" not in request.files:
                 return jsonify({"error": "오디오 파일이 없습니다."}), 400
 
@@ -95,12 +114,20 @@ def register_routes(app: Flask) -> None:
 
             user_input = transcribe_audio_file(file_path)
 
-            return jsonify({"session_id": session_id, "user_speech": user_input})
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
 
-        except Exception as e:
-            print(f"STT 처리 오류: {e}")
+            return jsonify(
+                {
+                    "session_id": session_id,
+                    "analysis_generation": get_analysis_generation(session_id),
+                    "user_speech": user_input,
+                }
+            )
+
+        except Exception:
+            app.logger.exception("STT 처리 오류")
             return jsonify({"error": "음성 인식 중 문제가 발생했습니다."}), 500
-
 
     @app.route("/generate-answer", methods=["POST"])
     def generate_answer():
@@ -110,15 +137,22 @@ def register_routes(app: Flask) -> None:
             data = request.get_json(silent=True) or {}
             user_input = normalize_text(data.get("message", ""))
             llm_provider = get_requested_llm_provider(data)
+            requested_generation = get_requested_analysis_generation(data)
 
             if not user_input:
                 return jsonify({"error": "분석할 텍스트가 없습니다."}), 400
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
 
             result = generate_answer_result(user_input, provider=llm_provider)
+
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
 
             return jsonify(
                 {
                     "session_id": session_id,
+                    "analysis_generation": get_analysis_generation(session_id),
                     "user_speech": user_input,
                     "answer": result.get("answer", ""),
                     "is_answer_only": True,
@@ -126,10 +160,9 @@ def register_routes(app: Flask) -> None:
                 }
             )
 
-        except Exception as e:
-            print(f"응답 사전 생성 오류: {e}")
+        except Exception:
+            app.logger.exception("응답 사전 생성 오류")
             return jsonify({"error": "응답 생성 중 문제가 발생했습니다."}), 500
-
 
     @app.route("/analyze-role", methods=["POST"])
     def analyze_role():
@@ -140,11 +173,19 @@ def register_routes(app: Flask) -> None:
             user_input = normalize_text(data.get("message", ""))
             role_key = normalize_role_key(data.get("role", ""))
             llm_provider = get_requested_llm_provider(data)
+            requested_generation = get_requested_analysis_generation(data)
 
             if not user_input:
                 return jsonify({"error": "분석할 텍스트가 없습니다."}), 400
-            if role_key not in {"repetition", "memory", "time_confusion", "incoherence"}:
+            if role_key not in {
+                "repetition",
+                "memory",
+                "time_confusion",
+                "incoherence",
+            }:
                 return jsonify({"error": "지원하지 않는 분석 역할입니다."}), 400
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
 
             role_result = generate_role_analysis_result(
                 role_key,
@@ -153,9 +194,13 @@ def register_routes(app: Flask) -> None:
                 provider=llm_provider,
             )
 
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
+
             return jsonify(
                 {
                     "session_id": session_id,
+                    "analysis_generation": get_analysis_generation(session_id),
                     "role": role_key,
                     "score": int(role_result.get("score", 0)),
                     "reason": role_result.get("reason", ""),
@@ -163,10 +208,9 @@ def register_routes(app: Flask) -> None:
                 }
             )
 
-        except Exception as e:
-            print(f"역할별 분석 오류: {e}")
+        except Exception:
+            app.logger.exception("역할별 분석 오류")
             return jsonify({"error": "역할별 분석 중 문제가 발생했습니다."}), 500
-
 
     @app.route("/finalize-analysis", methods=["POST"])
     def finalize_analysis():
@@ -178,9 +222,12 @@ def register_routes(app: Flask) -> None:
             precomputed_answer = normalize_text(data.get("answer", ""))
             llm_provider = get_requested_llm_provider(data)
             role_results = normalize_role_results_payload(data.get("role_results", {}))
+            requested_generation = get_requested_analysis_generation(data)
 
             if not user_input:
                 return jsonify({"error": "분석할 텍스트가 없습니다."}), 400
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
 
             answer_result = (
                 {"answer": precomputed_answer}
@@ -191,6 +238,8 @@ def register_routes(app: Flask) -> None:
                 )
             )
             fields = build_fields_from_role_results(role_results)
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
             return finalize_analysis_response(
                 session_id=session_id,
                 user_input=user_input,
@@ -199,10 +248,9 @@ def register_routes(app: Flask) -> None:
                 llm_provider=llm_provider,
             )
 
-        except Exception as e:
-            print(f"최종 분석 반영 오류: {e}")
+        except Exception:
+            app.logger.exception("최종 분석 반영 오류")
             return jsonify({"error": "최종 분석 반영 중 문제가 발생했습니다."}), 500
-
 
     @app.route("/analyze-text", methods=["POST"])
     def analyze_text():
@@ -213,9 +261,12 @@ def register_routes(app: Flask) -> None:
             user_input = normalize_text(data.get("message", ""))
             precomputed_answer = normalize_text(data.get("answer", ""))
             llm_provider = get_requested_llm_provider(data)
+            requested_generation = get_requested_analysis_generation(data)
 
             if not user_input:
                 return jsonify({"error": "분석할 텍스트가 없습니다."}), 400
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
 
             answer_result = (
                 {"answer": precomputed_answer}
@@ -228,6 +279,8 @@ def register_routes(app: Flask) -> None:
             fields = generate_analysis_result(
                 user_input, session_id=session_id, provider=llm_provider
             )
+            if not is_current_analysis_generation(session_id, requested_generation):
+                return build_stale_generation_response(session_id)
             return finalize_analysis_response(
                 session_id=session_id,
                 user_input=user_input,
@@ -236,10 +289,9 @@ def register_routes(app: Flask) -> None:
                 llm_provider=llm_provider,
             )
 
-        except Exception as e:
-            print(f"텍스트 분석 오류: {e}")
+        except Exception:
+            app.logger.exception("텍스트 분석 오류")
             return jsonify({"error": "텍스트 분석 중 문제가 발생했습니다."}), 500
-
 
     @app.route("/chat", methods=["POST"])
     def chat():
@@ -353,10 +405,9 @@ def register_routes(app: Flask) -> None:
                 llm_provider=llm_provider,
             )
 
-        except Exception as e:
-            print(f"서버 오류: {e}")
+        except Exception:
+            app.logger.exception("서버 오류")
             return jsonify({"error": "서버 처리 중 문제가 발생했습니다."}), 500
-
 
     @app.route("/score-history", methods=["GET"])
     def score_history():
@@ -365,6 +416,7 @@ def register_routes(app: Flask) -> None:
         return jsonify(
             {
                 "session_id": session_id,
+                "analysis_generation": get_analysis_generation(session_id),
                 "average_score": get_average_score(session_id),
                 "recent_average_score": get_recent_average_score(session_id),
                 "risk_level": get_risk_level_from_score(
@@ -377,10 +429,10 @@ def register_routes(app: Flask) -> None:
             }
         )
 
-
     @app.route("/reset-history", methods=["POST"])
     def reset_history():
         session_id = get_or_create_session_id()
+        next_generation = bump_analysis_generation(session_id)
 
         conversation_store[session_id] = []
         score_store[session_id] = []
@@ -397,6 +449,7 @@ def register_routes(app: Flask) -> None:
         return jsonify(
             {
                 "session_id": session_id,
+                "analysis_generation": next_generation,
                 "message": "기록이 초기화되었습니다.",
                 "average_score": 0.0,
                 "recent_average_score": 0.0,
