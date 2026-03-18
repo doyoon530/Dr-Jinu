@@ -1,8 +1,12 @@
+import logging
 import re
+from contextlib import nullcontext
 from difflib import SequenceMatcher
 
+from . import runtime
 from .common import clamp_score, clamp_subscore, normalize_text, validate_user_text
 from .config import (
+    ANSWER_STOP_SEQUENCES,
     MAX_ANALYSIS_RETRY,
     REPETITION_SCORE_OPTIONS,
     ROLE_ANALYSIS_META,
@@ -29,6 +33,8 @@ from .llm_service import (
     get_or_create_role_analysis_chains,
     invoke_api_prompt,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_similarity_text(text: str) -> str:
@@ -268,12 +274,13 @@ def detect_repetition_signal(
 
     try:
         repetition_chain = get_or_create_repetition_chain()
-        response = repetition_chain.invoke(
-            {
-                "recent_user_questions": build_repetition_context(previous_turns),
-                "question": normalize_text(question),
-            }
-        )
+        with runtime.analysis_llm_lock:
+            response = repetition_chain.invoke(
+                {
+                    "recent_user_questions": build_repetition_context(previous_turns),
+                    "question": normalize_text(question),
+                }
+            )
         llm_result = parse_repetition_chain_response(response.get("text", ""))
 
         if llm_result["score"] > best_result["score"]:
@@ -287,7 +294,7 @@ def detect_repetition_signal(
                 best_result["reason"] = llm_result["reason"]
                 best_result["source"] = llm_result["source"]
     except Exception as e:
-        print(f"[질문 반복 전용 판별 실패] {e}")
+        logger.warning("질문 반복 전용 판별 실패: %s", e, exc_info=True)
 
     if best_result["score"] > 0 and not best_result.get("reason"):
         matched_question = best_result.get("matched_question") or heuristic_result.get(
@@ -305,6 +312,8 @@ def detect_repetition_signal(
         best_result["matched_question"] = heuristic_result.get("matched_question", "")
 
     return best_result
+
+
 def get_default_reason() -> str:
     return (
         "입력 문장에서 충분한 분석 근거를 안정적으로 생성하지 못했습니다. "
@@ -865,6 +874,9 @@ def generate_single_role_analysis(
     retry_chain = None
     if normalized_provider == "local":
         primary_chain, retry_chain = get_or_create_role_analysis_chains(role_key)
+    local_lock = (
+        runtime.analysis_llm_lock if normalized_provider == "local" else nullcontext()
+    )
 
     for attempt in range(MAX_ANALYSIS_RETRY):
         try:
@@ -889,20 +901,22 @@ def generate_single_role_analysis(
                     max_tokens=get_analysis_max_tokens(),
                 )
             elif attempt == 0:
-                response = primary_chain.invoke(
-                    {
-                        "conversation_context": conversation_context,
-                        "question": question,
-                    }
-                )
+                with local_lock:
+                    response = primary_chain.invoke(
+                        {
+                            "conversation_context": conversation_context,
+                            "question": question,
+                        }
+                    )
             else:
-                response = retry_chain.invoke(
-                    {
-                        "conversation_context": conversation_context,
-                        "question": question,
-                        "previous_response": previous_response,
-                    }
-                )
+                with local_lock:
+                    response = retry_chain.invoke(
+                        {
+                            "conversation_context": conversation_context,
+                            "question": question,
+                            "previous_response": previous_response,
+                        }
+                    )
 
             raw_text = response.get("text", "").strip()
             previous_response = raw_text
@@ -911,7 +925,13 @@ def generate_single_role_analysis(
                     role_key, force_single_role_analysis_format(role_key, raw_text)
                 )
         except Exception as e:
-            print(f"[{role_key} 분석 재시도 {attempt + 1} 실패] {e}")
+            logger.warning(
+                "%s 분석 재시도 %s 실패: %s",
+                role_key,
+                attempt + 1,
+                e,
+                exc_info=True,
+            )
 
     if previous_response:
         return parse_single_role_analysis(
@@ -964,12 +984,15 @@ def generate_repetition_role_analysis(
             )
         else:
             repetition_chain = get_or_create_repetition_chain()
-            response = repetition_chain.invoke(
-                {
-                    "recent_user_questions": build_repetition_context(previous_turns),
-                    "question": question,
-                }
-            )
+            with runtime.analysis_llm_lock:
+                response = repetition_chain.invoke(
+                    {
+                        "recent_user_questions": build_repetition_context(
+                            previous_turns
+                        ),
+                        "question": question,
+                    }
+                )
         parsed = parse_repetition_chain_response(response.get("text", ""))
         return {
             "role": "repetition",
@@ -977,7 +1000,7 @@ def generate_repetition_role_analysis(
             "reason": normalize_text(parsed.get("reason", "")),
         }
     except Exception as e:
-        print(f"[repetition 분석 실패] {e}")
+        logger.warning("repetition 분석 실패: %s", e, exc_info=True)
         if normalized_provider == "api":
             raise RuntimeError("질문 반복 API 분석에 실패했습니다.") from e
         return {
@@ -1162,6 +1185,43 @@ def build_full_text(answer_text: str, fields: dict) -> str:
     )
 
 
+def sanitize_answer_text(raw_text: str) -> str:
+    text = normalize_text(raw_text)
+    if not text:
+        return ""
+
+    leaked_prefixes = [
+        "라고 했을 때, 가장 적절한 답변은 무엇일까요?",
+        "가장 적절한 답변은 무엇일까요?",
+        "위 발화에 대해 사용자에게 바로 보여줄 최종 답변만 작성하세요.",
+        "위 발화에 대해 사용자에게 바로 보여줄 최종 답변만 작성하세요",
+        "최종 답변만 작성하세요.",
+        "최종 답변만 작성하세요",
+    ]
+    for leaked_prefix in leaked_prefixes:
+        if leaked_prefix in text:
+            text = text.split(leaked_prefix)[-1].strip()
+
+    text = re.sub(
+        r"(?is)^\s*(?:질문|사용자 질문|사용자 발화|user)\s*:\s*.*?(?=(?:assistant|ai|답변)\s*:)",
+        "",
+        text,
+    ).strip()
+
+    role_parts = re.split(r"(?is)\b(?:assistant|ai|답변)\s*:\s*", text)
+    if len(role_parts) > 1:
+        text = role_parts[-1].strip()
+
+    text = re.sub(r"(?is)^\s*(?:assistant|ai|답변)\s*:\s*", "", text).strip()
+    text = re.sub(
+        r"(?is)^\s*(?:라고 했을 때,\s*)?(?:가장 적절한 답변은 무엇일까요\?\s*)+",
+        "",
+        text,
+    ).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def generate_answer_result(question: str, provider: str | None = None) -> dict:
     question = normalize_text(question)
     normalized_provider = normalize_llm_provider(provider or get_default_llm_provider())
@@ -1179,14 +1239,14 @@ def generate_answer_result(question: str, provider: str | None = None) -> dict:
                 model_kind="answer",
                 temperature=0.2,
                 max_tokens=256,
+                stop=ANSWER_STOP_SEQUENCES,
             )
         else:
             answer_response = get_or_create_answer_chain().invoke(
                 {"question": question}
             )
 
-        answer_text = answer_response.get("text", "").strip()
-        answer_text = re.sub(r"^\s*AI:\s*", "", answer_text)
+        answer_text = sanitize_answer_text(answer_response.get("text", ""))
 
         if not answer_text:
             answer_text = "질문에 대한 답변을 생성하지 못했습니다."
@@ -1198,7 +1258,7 @@ def generate_answer_result(question: str, provider: str | None = None) -> dict:
         }
 
     except Exception as e:
-        print(f"LLM 응답 생성 실패: {e}")
+        logger.warning("LLM 응답 생성 실패: %s", e, exc_info=True)
         error_result = build_error_result()
         if normalized_provider == "api" and not is_api_llm_configured():
             error_result["answer"] = (
