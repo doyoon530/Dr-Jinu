@@ -313,3 +313,6 @@ http://서버PC_IP:5000
 - 조재민
 - 김우성
 - 안재영
+<p align="center">
+  <img src="docs/images/banner.png" alt="NCAI Capstone Banner" width="100%" />
+</p>
