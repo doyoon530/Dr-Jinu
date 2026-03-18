@@ -36,6 +36,22 @@
                 <p>최근 대화 누적 분석</p>
             </div>
 
+            <div class="mode-card glass-card">
+                <div class="mode-card-head">
+                    <div>
+                        <div class="mode-card-title">LLM 실행 모드</div>
+                        <div class="mode-card-status" id="llmModeStatus">로컬 모드</div>
+                    </div>
+                    <div class="mode-toggle" id="llmModeToggle">
+                        <button id="llmModeLocal" class="mode-toggle-btn is-active" type="button">로컬</button>
+                        <button id="llmModeApi" class="mode-toggle-btn" type="button">API</button>
+                    </div>
+                </div>
+                <div class="mode-card-hint" id="llmModeHint">
+                    현재 컴퓨터에 있는 로컬 모델로 답변과 분석을 수행합니다.
+                </div>
+            </div>
+
             <div class="status-card glass-strong" id="statusCard">
                 <div class="status-label">누적 위험 상태</div>
                 <div class="status-value" id="riskText">정상</div>
@@ -89,7 +105,7 @@
                     <div class="title-container chat-title">
                         <h3>NCAI</h3>
                         <h1>음성 인식 치매 위험도 분석 시스템</h1>
-                        <p>대화 누적 위험도 + 언어 특징 점수 분해 + Recall Memory Test</p>
+                        <p>김도윤/조재민/김우성/안재영</p>
                     </div>
 
                     <div class="chat-container glass-panel" id="chatContainer">
@@ -176,7 +192,6 @@
 
                     <div class="button-row detached-button-row">
                         <button id="startRecord" class="record-btn primary-btn" type="button">녹음 시작</button>
-                        <button id="stopRecord" class="record-btn secondary-btn" type="button" disabled>녹음 중지</button>
                         <button id="resetHistory" class="record-btn danger-btn" type="button">기록 초기화</button>
                     </div>
                 </section>
