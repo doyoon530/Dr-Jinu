@@ -1,327 +1,417 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NCAI 음성 인식 치매 위험도 분석 시스템</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body>
+  </head>
+  <body>
     <div class="bg-orb orb-1"></div>
     <div class="bg-orb orb-2"></div>
     <div class="bg-orb orb-3"></div>
 
     <div id="warningPopup" class="warning-popup hidden">
-        <div class="warning-popup-content glass-card">
-            <div class="warning-popup-title">위험 경고</div>
-            <div class="warning-popup-text" id="warningPopupText">
-                높은 치매 의심 점수가 감지되었습니다.
-            </div>
-            <button id="closeWarningPopup" class="popup-close-btn" type="button">확인</button>
+      <div class="warning-popup-content glass-card">
+        <div class="warning-popup-title">위험 경고</div>
+        <div class="warning-popup-text" id="warningPopupText">
+          높은 치매 의심 점수가 감지되었습니다.
         </div>
+        <button id="closeWarningPopup" class="popup-close-btn" type="button">
+          확인
+        </button>
+      </div>
     </div>
 
     <div class="layout">
-        <aside class="sidebar glass-panel">
-            <div class="sidebar-header">
-                <div class="sidebar-brand">
-                    <div class="sidebar-brand-mark" aria-hidden="true">GNU</div>
-                    <div class="sidebar-brand-copy">
-                        <span>경상국립대학교</span>
-                        <small>Gyeongsang National University</small>
-                    </div>
-                </div>
-                <h2>인지 위험도 모니터링</h2>
-                <p>최근 대화 누적 분석</p>
+      <aside class="sidebar glass-panel">
+        <div class="sidebar-header">
+          <div class="sidebar-brand">
+            <div class="sidebar-brand-mark" aria-hidden="true">GNU</div>
+            <div class="sidebar-brand-copy">
+              <span>경상국립대학교</span>
+              <small>Gyeongsang National University</small>
+            </div>
+          </div>
+          <h2>인지 위험도 모니터링</h2>
+          <p>최근 대화 누적 분석</p>
+        </div>
+
+        <div class="mode-card glass-card">
+          <div class="mode-card-head">
+            <div>
+              <div class="mode-card-title">LLM 실행 모드</div>
+              <div class="mode-card-status" id="llmModeStatus">로컬 모드</div>
+            </div>
+            <div class="mode-toggle" id="llmModeToggle">
+              <button
+                id="llmModeLocal"
+                class="mode-toggle-btn is-active"
+                type="button"
+              >
+                로컬
+              </button>
+              <button id="llmModeApi" class="mode-toggle-btn" type="button">
+                API
+              </button>
+            </div>
+          </div>
+          <div class="mode-card-hint" id="llmModeHint">
+            현재 컴퓨터에 있는 로컬 모델로 답변과 분석을 수행합니다.
+          </div>
+        </div>
+
+        <div class="status-card glass-strong" id="statusCard">
+          <div class="status-label">누적 위험 상태</div>
+          <div class="status-value" id="riskText">정상</div>
+          <div class="status-subtext" id="riskDescription">
+            안정적인 상태입니다.
+          </div>
+        </div>
+
+        <div class="summary-grid">
+          <div class="mini-card glass-card">
+            <div class="mini-title">전체 평균</div>
+            <div class="mini-value" id="avgScore">0.0</div>
+          </div>
+
+          <div class="mini-card glass-card">
+            <div class="mini-title">최근 5회 평균</div>
+            <div class="mini-value" id="recentAvgScore">0.0</div>
+          </div>
+
+          <div class="mini-card glass-card">
+            <div class="mini-title">최근 점수</div>
+            <div class="mini-value" id="latestScore">0</div>
+          </div>
+
+          <div class="mini-card glass-card">
+            <div class="mini-title">추세</div>
+            <div class="mini-value trend-text" id="trendText">데이터 부족</div>
+          </div>
+        </div>
+
+        <div class="chart-card glass-card gauge-card">
+          <div class="card-title">누적 위험도 게이지</div>
+          <div class="gauge-wrap">
+            <canvas id="gaugeChart"></canvas>
+            <div class="gauge-center">
+              <div id="gaugeScore">0</div>
+              <span>점</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="chart-card glass-card trend-card">
+          <div class="card-title">시간별 점수 추이</div>
+          <div class="trend-chart-wrap">
+            <canvas id="scoreChart"></canvas>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="workspace">
+          <section class="chat-section">
+            <div class="title-container chat-title">
+              <h3>NCAI</h3>
+              <h1>음성 인식 치매 위험도 분석 시스템</h1>
+              <p>김도윤/조재민/김우성/안재영</p>
             </div>
 
-            <div class="mode-card glass-card">
-                <div class="mode-card-head">
-                    <div>
-                        <div class="mode-card-title">LLM 실행 모드</div>
-                        <div class="mode-card-status" id="llmModeStatus">로컬 모드</div>
-                    </div>
-                    <div class="mode-toggle" id="llmModeToggle">
-                        <button id="llmModeLocal" class="mode-toggle-btn is-active" type="button">로컬</button>
-                        <button id="llmModeApi" class="mode-toggle-btn" type="button">API</button>
-                    </div>
+            <div class="chat-container glass-panel" id="chatContainer">
+              <div
+                class="voice-ambient-stage"
+                id="voiceAmbientStage"
+                aria-hidden="true"
+              >
+                <div class="voice-ambient-core"></div>
+                <div class="voice-ambient-halo voice-ambient-halo-left"></div>
+                <div class="voice-ambient-halo voice-ambient-halo-right"></div>
+                <svg
+                  class="voice-ambient-wave wave-back"
+                  viewBox="0 0 960 320"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient
+                      id="assistantArcGradientBack"
+                      x1="0%"
+                      y1="0%"
+                      x2="100%"
+                      y2="0%"
+                    >
+                      <stop offset="0%" stop-color="#4285F4"></stop>
+                      <stop offset="30%" stop-color="#EA4335"></stop>
+                      <stop offset="62%" stop-color="#FBBC05"></stop>
+                      <stop offset="100%" stop-color="#34A853"></stop>
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M130 252 C 292 138, 668 138, 830 252"
+                    stroke="url(#assistantArcGradientBack)"
+                  ></path>
+                </svg>
+                <svg
+                  class="voice-ambient-wave wave-mid"
+                  viewBox="0 0 960 320"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient
+                      id="assistantArcGradientMid"
+                      x1="0%"
+                      y1="0%"
+                      x2="100%"
+                      y2="0%"
+                    >
+                      <stop offset="0%" stop-color="#5C9CFF"></stop>
+                      <stop offset="28%" stop-color="#F06256"></stop>
+                      <stop offset="60%" stop-color="#F9C63C"></stop>
+                      <stop offset="100%" stop-color="#41C26A"></stop>
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M162 254 C 308 162, 652 162, 798 254"
+                    stroke="url(#assistantArcGradientMid)"
+                  ></path>
+                </svg>
+                <svg
+                  class="voice-ambient-wave wave-front"
+                  viewBox="0 0 960 320"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient
+                      id="assistantArcGradientFront"
+                      x1="0%"
+                      y1="0%"
+                      x2="100%"
+                      y2="0%"
+                    >
+                      <stop offset="0%" stop-color="#8AB4F8"></stop>
+                      <stop offset="28%" stop-color="#F28B82"></stop>
+                      <stop offset="60%" stop-color="#FDD663"></stop>
+                      <stop offset="100%" stop-color="#81C995"></stop>
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M194 256 C 326 184, 634 184, 766 256"
+                    stroke="url(#assistantArcGradientFront)"
+                  ></path>
+                </svg>
+              </div>
+              <div class="chat-topbar">
+                <div class="chat-topbar-left">
+                  <div class="topbar-badge">실시간 분석</div>
+
+                  <div
+                    id="recordingIndicator"
+                    class="recording-indicator hidden"
+                  >
+                    <span class="record-dot"></span>
+                    녹음 중
+                  </div>
+
+                  <div id="aiThinking" class="ai-thinking hidden">
+                    AI 언어 패턴 분석 중...
+                  </div>
                 </div>
-                <div class="mode-card-hint" id="llmModeHint">
-                    현재 컴퓨터에 있는 로컬 모델로 답변과 분석을 수행합니다.
+
+                <div class="chat-topbar-right" id="systemStateText">
+                  준비 완료
                 </div>
+              </div>
+
+              <div class="process-panel">
+                <div class="process-head">
+                  <span class="process-title">처리 단계</span>
+                  <span class="process-detail" id="processDetail">대기 중</span>
+                </div>
+                <div class="process-steps" id="processSteps">
+                  <div class="process-step" data-step="capture">음성 수신</div>
+                  <div class="process-step" data-step="stt">음성 인식</div>
+                  <div class="process-step" data-step="answer">답변 생성</div>
+                  <div class="process-step" data-step="analysis">
+                    위험도 분석
+                  </div>
+                  <div class="process-step" data-step="render">화면 반영</div>
+                </div>
+              </div>
+
+              <div id="chatWindow" class="chat-window">
+                <div class="chat-empty-state" id="chatEmptyState">
+                  <div class="chat-empty-kicker">Ready For Analysis</div>
+                  <h4>아직 대화 기록이 없습니다.</h4>
+                  <p>
+                    녹음을 시작하면 답변과 위험도 분석이 이곳에 차례대로
+                    표시됩니다.
+                  </p>
+                  <p>
+                    대화가 쌓이면 메시지를 클릭해 해당 시점의 분석 결과를 다시
+                    볼 수 있습니다.
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div class="status-card glass-strong" id="statusCard">
-                <div class="status-label">누적 위험 상태</div>
-                <div class="status-value" id="riskText">정상</div>
-                <div class="status-subtext" id="riskDescription">안정적인 상태입니다.</div>
+            <div class="button-row detached-button-row">
+              <button
+                id="startRecord"
+                class="record-btn primary-btn"
+                type="button"
+              >
+                녹음 시작
+              </button>
+              <button
+                id="resetHistory"
+                class="record-btn danger-btn"
+                type="button"
+              >
+                기록 초기화
+              </button>
             </div>
+          </section>
 
-            <div class="summary-grid">
-                <div class="mini-card glass-card">
-                    <div class="mini-title">전체 평균</div>
-                    <div class="mini-value" id="avgScore">0.0</div>
+          <aside class="analysis-side">
+            <div class="analysis-panel-right">
+              <div class="analysis-card glass-card">
+                <div class="analysis-title-row">
+                  <div class="analysis-title">AI 분석 결과</div>
+                  <span
+                    class="analysis-state-badge is-idle"
+                    id="analysisStateBadge"
+                    >대기</span
+                  >
+                </div>
+                <div class="analysis-empty-hint" id="analysisEmptyHint">
+                  아직 분석 전입니다. 대화를 시작하면 판단, 점수, 근거가 이곳에
+                  표시됩니다.
                 </div>
 
-                <div class="mini-card glass-card">
-                    <div class="mini-title">최근 5회 평균</div>
-                    <div class="mini-value" id="recentAvgScore">0.0</div>
+                <div class="analysis-grid">
+                  <div class="analysis-row">
+                    <span class="analysis-label">판단</span>
+                    <span class="analysis-value" id="analysisJudgment"
+                      >대기</span
+                    >
+                  </div>
+
+                  <div class="analysis-row">
+                    <span class="analysis-label">의심 점수</span>
+                    <span class="analysis-value" id="analysisScore">-</span>
+                  </div>
+
+                  <div class="analysis-row">
+                    <span class="analysis-label">위험도</span>
+                    <span class="analysis-value" id="analysisRiskLevel"
+                      >분석 전</span
+                    >
+                  </div>
+
+                  <div class="analysis-row">
+                    <span class="analysis-label">추세</span>
+                    <span class="analysis-value" id="analysisTrend">-</span>
+                  </div>
                 </div>
 
-                <div class="mini-card glass-card">
-                    <div class="mini-title">최근 점수</div>
-                    <div class="mini-value" id="latestScore">0</div>
+                <div class="analysis-reason">
+                  <div class="analysis-label reason-label">근거</div>
+                  <div class="analysis-reason-box" id="analysisReason">
+                    아직 분석 결과가 없습니다.
+                  </div>
+                </div>
+              </div>
+
+              <div class="analysis-card glass-card">
+                <div class="analysis-title">언어 특징 점수 분해</div>
+
+                <div class="feature-item">
+                  <div class="feature-head">
+                    <span>질문 반복</span>
+                    <span id="featureRepetitionValue">0</span>
+                  </div>
+                  <div class="feature-bar">
+                    <div id="featureRepetitionBar" class="feature-fill"></div>
+                  </div>
                 </div>
 
-                <div class="mini-card glass-card">
-                    <div class="mini-title">추세</div>
-                    <div class="mini-value trend-text" id="trendText">데이터 부족</div>
+                <div class="feature-item">
+                  <div class="feature-head">
+                    <span>기억 혼란</span>
+                    <span id="featureMemoryValue">0</span>
+                  </div>
+                  <div class="feature-bar">
+                    <div id="featureMemoryBar" class="feature-fill"></div>
+                  </div>
                 </div>
+
+                <div class="feature-item">
+                  <div class="feature-head">
+                    <span>시간 / 상황 혼란</span>
+                    <span id="featureTimeValue">0</span>
+                  </div>
+                  <div class="feature-bar">
+                    <div id="featureTimeBar" class="feature-fill"></div>
+                  </div>
+                </div>
+
+                <div class="feature-item">
+                  <div class="feature-head">
+                    <span>문장 비논리성</span>
+                    <span id="featureIncoherenceValue">0</span>
+                  </div>
+                  <div class="feature-bar">
+                    <div id="featureIncoherenceBar" class="feature-fill"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="analysis-card glass-card">
+                <div class="analysis-title">AI Confidence</div>
+                <div class="confidence-box">
+                  <div class="confidence-score" id="confidenceScore">-</div>
+                  <div class="confidence-desc">분석 신뢰도</div>
+                </div>
+              </div>
+
+              <div class="analysis-card glass-card radar-card">
+                <div class="analysis-title">언어 특징 Radar</div>
+                <div class="radar-chart-wrap">
+                  <canvas id="radarChart"></canvas>
+                </div>
+              </div>
+
+              <div class="analysis-card glass-card recall-card">
+                <div class="analysis-title">Recall Memory Test</div>
+
+                <div class="analysis-row">
+                  <span class="analysis-label">상태</span>
+                  <span class="analysis-value" id="recallStatus">대기</span>
+                </div>
+
+                <div class="analysis-row">
+                  <span class="analysis-label">최근 결과</span>
+                  <span class="analysis-value" id="recallLastResult">없음</span>
+                </div>
+
+                <div class="analysis-reason">
+                  <div class="analysis-label reason-label">안내</div>
+                  <div class="analysis-reason-box" id="recallPrompt">
+                    아직 진행 중인 기억 테스트가 없습니다.
+                  </div>
+                </div>
+              </div>
             </div>
-
-            <div class="chart-card glass-card gauge-card">
-                <div class="card-title">누적 위험도 게이지</div>
-                <div class="gauge-wrap">
-                    <canvas id="gaugeChart"></canvas>
-                    <div class="gauge-center">
-                        <div id="gaugeScore">0</div>
-                        <span>점</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="chart-card glass-card trend-card">
-                <div class="card-title">시간별 점수 추이</div>
-                <div class="trend-chart-wrap">
-                    <canvas id="scoreChart"></canvas>
-                </div>
-            </div>
-        </aside>
-
-        <main class="main">
-            <section class="workspace">
-                <section class="chat-section">
-                    <div class="title-container chat-title">
-                        <h3>NCAI</h3>
-                        <h1>음성 인식 치매 위험도 분석 시스템</h1>
-                        <p>김도윤/조재민/김우성/안재영</p>
-                    </div>
-
-                    <div class="chat-container glass-panel" id="chatContainer">
-                        <div class="voice-ambient-stage" id="voiceAmbientStage" aria-hidden="true">
-                            <div class="voice-ambient-core"></div>
-                            <div class="voice-ambient-halo voice-ambient-halo-left"></div>
-                            <div class="voice-ambient-halo voice-ambient-halo-right"></div>
-                            <svg class="voice-ambient-wave wave-back" viewBox="0 0 960 320" preserveAspectRatio="none" aria-hidden="true">
-                                <defs>
-                                    <linearGradient id="assistantArcGradientBack" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stop-color="#4285F4"></stop>
-                                        <stop offset="30%" stop-color="#EA4335"></stop>
-                                        <stop offset="62%" stop-color="#FBBC05"></stop>
-                                        <stop offset="100%" stop-color="#34A853"></stop>
-                                    </linearGradient>
-                                </defs>
-                                <path d="M130 252 C 292 138, 668 138, 830 252" stroke="url(#assistantArcGradientBack)"></path>
-                            </svg>
-                            <svg class="voice-ambient-wave wave-mid" viewBox="0 0 960 320" preserveAspectRatio="none" aria-hidden="true">
-                                <defs>
-                                    <linearGradient id="assistantArcGradientMid" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stop-color="#5C9CFF"></stop>
-                                        <stop offset="28%" stop-color="#F06256"></stop>
-                                        <stop offset="60%" stop-color="#F9C63C"></stop>
-                                        <stop offset="100%" stop-color="#41C26A"></stop>
-                                    </linearGradient>
-                                </defs>
-                                <path d="M162 254 C 308 162, 652 162, 798 254" stroke="url(#assistantArcGradientMid)"></path>
-                            </svg>
-                            <svg class="voice-ambient-wave wave-front" viewBox="0 0 960 320" preserveAspectRatio="none" aria-hidden="true">
-                                <defs>
-                                    <linearGradient id="assistantArcGradientFront" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stop-color="#8AB4F8"></stop>
-                                        <stop offset="28%" stop-color="#F28B82"></stop>
-                                        <stop offset="60%" stop-color="#FDD663"></stop>
-                                        <stop offset="100%" stop-color="#81C995"></stop>
-                                    </linearGradient>
-                                </defs>
-                                <path d="M194 256 C 326 184, 634 184, 766 256" stroke="url(#assistantArcGradientFront)"></path>
-                            </svg>
-                        </div>
-                        <div class="chat-topbar">
-                            <div class="chat-topbar-left">
-                                <div class="topbar-badge">실시간 분석</div>
-
-                                <div id="recordingIndicator" class="recording-indicator hidden">
-                                    <span class="record-dot"></span>
-                                    녹음 중
-                                </div>
-
-                                <div id="aiThinking" class="ai-thinking hidden">
-                                    AI 언어 패턴 분석 중...
-                                </div>
-                            </div>
-
-                            <div class="chat-topbar-right" id="systemStateText">
-                                준비 완료
-                            </div>
-                        </div>
-
-                        <div class="process-panel">
-                            <div class="process-head">
-                                <span class="process-title">처리 단계</span>
-                                <span class="process-detail" id="processDetail">대기 중</span>
-                            </div>
-                            <div class="process-steps" id="processSteps">
-                                <div class="process-step" data-step="capture">음성 수신</div>
-                                <div class="process-step" data-step="stt">음성 인식</div>
-                                <div class="process-step" data-step="answer">답변 생성</div>
-                                <div class="process-step" data-step="analysis">위험도 분석</div>
-                                <div class="process-step" data-step="render">화면 반영</div>
-                            </div>
-                        </div>
-
-                        <div id="chatWindow" class="chat-window">
-                            <div class="chat-empty-state" id="chatEmptyState">
-                                <div class="chat-empty-kicker">Ready For Analysis</div>
-                                <h4>아직 대화 기록이 없습니다.</h4>
-                                <p>녹음을 시작하면 답변과 위험도 분석이 이곳에 차례대로 표시됩니다.</p>
-                                <p>대화가 쌓이면 메시지를 클릭해 해당 시점의 분석 결과를 다시 볼 수 있습니다.</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="button-row detached-button-row">
-                        <button id="startRecord" class="record-btn primary-btn" type="button">녹음 시작</button>
-                        <button id="resetHistory" class="record-btn danger-btn" type="button">기록 초기화</button>
-                    </div>
-                </section>
-
-                <aside class="analysis-side">
-                    <div class="analysis-panel-right">
-                        <div class="analysis-card glass-card">
-                            <div class="analysis-title-row">
-                                <div class="analysis-title">AI 분석 결과</div>
-                                <span class="analysis-state-badge is-idle" id="analysisStateBadge">대기</span>
-                            </div>
-                            <div class="analysis-empty-hint" id="analysisEmptyHint">
-                                아직 분석 전입니다. 대화를 시작하면 판단, 점수, 근거가 이곳에 표시됩니다.
-                            </div>
-
-                            <div class="analysis-grid">
-                                <div class="analysis-row">
-                                    <span class="analysis-label">판단</span>
-                                    <span class="analysis-value" id="analysisJudgment">대기</span>
-                                </div>
-
-                                <div class="analysis-row">
-                                    <span class="analysis-label">의심 점수</span>
-                                    <span class="analysis-value" id="analysisScore">-</span>
-                                </div>
-
-                                <div class="analysis-row">
-                                    <span class="analysis-label">위험도</span>
-                                    <span class="analysis-value" id="analysisRiskLevel">분석 전</span>
-                                </div>
-
-                                <div class="analysis-row">
-                                    <span class="analysis-label">추세</span>
-                                    <span class="analysis-value" id="analysisTrend">-</span>
-                                </div>
-                            </div>
-
-                            <div class="analysis-reason">
-                                <div class="analysis-label reason-label">근거</div>
-                                <div class="analysis-reason-box" id="analysisReason">
-                                    아직 분석 결과가 없습니다.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="analysis-card glass-card">
-                            <div class="analysis-title">언어 특징 점수 분해</div>
-
-                            <div class="feature-item">
-                                <div class="feature-head">
-                                    <span>질문 반복</span>
-                                    <span id="featureRepetitionValue">0</span>
-                                </div>
-                                <div class="feature-bar">
-                                    <div id="featureRepetitionBar" class="feature-fill"></div>
-                                </div>
-                            </div>
-
-                            <div class="feature-item">
-                                <div class="feature-head">
-                                    <span>기억 혼란</span>
-                                    <span id="featureMemoryValue">0</span>
-                                </div>
-                                <div class="feature-bar">
-                                    <div id="featureMemoryBar" class="feature-fill"></div>
-                                </div>
-                            </div>
-
-                            <div class="feature-item">
-                                <div class="feature-head">
-                                    <span>시간 / 상황 혼란</span>
-                                    <span id="featureTimeValue">0</span>
-                                </div>
-                                <div class="feature-bar">
-                                    <div id="featureTimeBar" class="feature-fill"></div>
-                                </div>
-                            </div>
-
-                            <div class="feature-item">
-                                <div class="feature-head">
-                                    <span>문장 비논리성</span>
-                                    <span id="featureIncoherenceValue">0</span>
-                                </div>
-                                <div class="feature-bar">
-                                    <div id="featureIncoherenceBar" class="feature-fill"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="analysis-card glass-card">
-                            <div class="analysis-title">AI Confidence</div>
-                            <div class="confidence-box">
-                                <div class="confidence-score" id="confidenceScore">-</div>
-                                <div class="confidence-desc">분석 신뢰도</div>
-                            </div>
-                        </div>
-
-                        <div class="analysis-card glass-card radar-card">
-                            <div class="analysis-title">언어 특징 Radar</div>
-                            <div class="radar-chart-wrap">
-                                <canvas id="radarChart"></canvas>
-                            </div>
-                        </div>
-
-                        <div class="analysis-card glass-card recall-card">
-                            <div class="analysis-title">Recall Memory Test</div>
-
-                            <div class="analysis-row">
-                                <span class="analysis-label">상태</span>
-                                <span class="analysis-value" id="recallStatus">대기</span>
-                            </div>
-
-                            <div class="analysis-row">
-                                <span class="analysis-label">최근 결과</span>
-                                <span class="analysis-value" id="recallLastResult">없음</span>
-                            </div>
-
-                            <div class="analysis-reason">
-                                <div class="analysis-label reason-label">안내</div>
-                                <div class="analysis-reason-box" id="recallPrompt">
-                                    아직 진행 중인 기억 테스트가 없습니다.
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </aside>
-            </section>
-        </main>
+          </aside>
+        </section>
+      </main>
     </div>
 
     <script src="/static/script.js"></script>
-</body>
+  </body>
 </html>
