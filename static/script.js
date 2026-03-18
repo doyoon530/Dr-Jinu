@@ -89,6 +89,488 @@ const analysisRoleLabels = {
   time_confusion: "시간 / 상황 혼란",
   incoherence: "문장 비논리성",
 };
+const urlParams = new URLSearchParams(window.location.search);
+const demoMode = normalizeText(urlParams.get("demo"));
+const isDemoMode = Boolean(demoMode);
+
+function createDemoScoreHistory(scores = [], labels = []) {
+  return scores.map((score, index) => ({
+    score,
+    time: labels[index] || `10:${String(index * 3 + 10).padStart(2, "0")}:00`,
+  }));
+}
+
+function buildDemoTurn(overrides = {}) {
+  const featureScores = {
+    repetition: 0,
+    memory: 0,
+    time_confusion: 0,
+    incoherence: 0,
+    ...(overrides.feature_scores || {}),
+  };
+  const scoreIncluded = overrides.score_included !== false;
+  const score = scoreIncluded
+    ? Number(
+        overrides.score ??
+          featureScores.repetition +
+            featureScores.memory +
+            featureScores.time_confusion +
+            featureScores.incoherence,
+      )
+    : 0;
+
+  return {
+    turn_id:
+      overrides.turn_id ||
+      `demo-turn-${Math.random().toString(36).slice(2, 8)}-${Date.now()}`,
+    time: overrides.time || "10:12:00",
+    user_text: overrides.user_text || "",
+    answer: overrides.answer || "",
+    judgment:
+      overrides.judgment ||
+      (scoreIncluded ? (score < 20 ? "정상" : "의심") : "판단 어려움"),
+    score,
+    reason: overrides.reason || "데모 화면을 위한 예시 분석 근거입니다.",
+    feature_scores: featureScores,
+    follow_up_messages: [...(overrides.follow_up_messages || [])],
+    score_included: scoreIncluded,
+    excluded_reason: overrides.excluded_reason || "",
+    llm_provider: overrides.llm_provider || "local",
+    risk_level: scoreIncluded
+      ? overrides.risk_level || getRiskLevelFromScore(score)
+      : "반영 제외",
+    trend: overrides.trend || "안정",
+    confidence: scoreIncluded
+      ? (overrides.confidence ?? calculateConfidenceValue(featureScores, score))
+      : 0,
+    average_score: Number(overrides.average_score ?? score),
+    recent_average_score: Number(overrides.recent_average_score ?? score),
+  };
+}
+
+function buildDemoPendingTurn(overrides = {}) {
+  return {
+    client_turn_id:
+      overrides.client_turn_id ||
+      `demo-pending-${Math.random().toString(36).slice(2, 8)}`,
+    user_text: overrides.user_text || "",
+    answer: overrides.answer || "",
+    created_at: Number(overrides.created_at || Date.now()),
+    pending_status: overrides.pending_status || "queued",
+    pending_error_message: overrides.pending_error_message || "",
+    follow_up_messages: [...(overrides.follow_up_messages || [])],
+    is_pending: true,
+  };
+}
+
+function buildDemoAnalysisData(turn, summary, recall = {}) {
+  return {
+    judgment: turn.judgment,
+    score: turn.score,
+    reason: turn.reason,
+    feature_scores: turn.feature_scores,
+    score_included: turn.score_included,
+    excluded_reason: turn.excluded_reason || "",
+    risk_level: turn.risk_level,
+    trend: turn.trend,
+    average_score: summary.average_score,
+    recent_average_score: summary.recent_average_score,
+    score_history: scoreHistory,
+    recall,
+  };
+}
+
+function getDemoScenarioMap() {
+  const historyLabels = ["10:10:12", "10:13:44", "10:16:05", "10:19:28"];
+  const sharedScoreHistory = createDemoScoreHistory(
+    [18, 28, 37, 46],
+    historyLabels,
+  );
+
+  const overviewSummary = {
+    average_score: 0,
+    recent_average_score: 0,
+    trend: "데이터 부족",
+  };
+  const monitoringSummary = {
+    average_score: 32.3,
+    recent_average_score: 36.3,
+    trend: "상승",
+  };
+
+  const baselineTurn = buildDemoTurn({
+    turn_id: "demo-turn-baseline",
+    time: "10:13:44",
+    user_text: "오늘 회의가 몇 시에 있는지 기억이 안 나.",
+    answer:
+      "회의 시간을 바로 떠올리기 어렵다면 일정표나 메일을 확인해 보시는 것이 좋겠습니다.",
+    judgment: "의심",
+    score: 28,
+    reason:
+      "시간 관련 정보를 바로 회상하지 못하는 표현이 나타났습니다. 최근 일정과 관련된 기억 인출이 다소 불안정한 모습으로 해석됩니다.",
+    feature_scores: {
+      repetition: 0,
+      memory: 12,
+      time_confusion: 12,
+      incoherence: 4,
+    },
+    risk_level: "Low Risk",
+    trend: "안정",
+    average_score: 23.0,
+    recent_average_score: 23.0,
+  });
+
+  const finalTurn = buildDemoTurn({
+    turn_id: "demo-turn-final",
+    time: "10:19:28",
+    user_text:
+      "오늘 회의가 언제였는지 기억이 안 나. 아까 물어봤던 것 같은데 다시 알려줄 수 있어?",
+    answer:
+      "회의 시간이 바로 떠오르지 않는다면 일정 앱이나 메일 기록을 확인해 보는 것이 좋겠습니다.",
+    judgment: "의심",
+    score: 46,
+    reason:
+      "동일한 회의 시간 정보를 다시 확인하려는 반복 질문이 관찰됩니다. 기억 회상 어려움과 시간 관련 혼동 표현이 함께 나타나 인지 위험 신호가 강화된 것으로 해석됩니다.",
+    feature_scores: {
+      repetition: 15,
+      memory: 14,
+      time_confusion: 12,
+      incoherence: 5,
+    },
+    risk_level: "Moderate Risk",
+    trend: "상승",
+    average_score: monitoringSummary.average_score,
+    recent_average_score: monitoringSummary.recent_average_score,
+  });
+
+  const overviewPending = buildDemoPendingTurn({
+    client_turn_id: "demo-answer-turn",
+    created_at: Date.now() - 2000,
+    user_text: "오늘 수업이 몇 시였는지 기억이 안 나.",
+    answer:
+      "수업 시간을 바로 떠올리기 어렵다면 시간표나 알림을 확인해 보시는 것이 좋겠습니다.",
+    pending_status: "queued",
+  });
+
+  const progressPending = buildDemoPendingTurn({
+    client_turn_id: "demo-analysis-turn",
+    created_at: Date.now() - 2000,
+    user_text: "오늘 회의가 몇 시였지? 조금 전에 들은 것 같은데 다시 말해줄래?",
+    answer:
+      "회의 시간을 바로 떠올리기 어렵다면 메일이나 일정표를 다시 확인해 보시는 것이 좋겠습니다.",
+    pending_status: "analyzing",
+  });
+
+  return {
+    overview: {
+      name: "overview",
+      llmMode: "local",
+      summary: overviewSummary,
+      scoreHistory: [],
+      turnHistory: [],
+      pendingTurns: [],
+      recall: { status: "idle", last_result: "없음", prompt: "" },
+      process: {
+        step: null,
+        detail: "대기 중입니다. 녹음을 시작하면 음성 입력을 기다립니다.",
+      },
+      systemState: "준비 완료",
+      thinkingText: "아직 분석 전입니다.",
+      analysisState: "reset",
+      voiceLevel: 0.06,
+    },
+    recording: {
+      name: "recording",
+      llmMode: "local",
+      summary: overviewSummary,
+      scoreHistory: [],
+      turnHistory: [],
+      pendingTurns: [],
+      recall: { status: "idle", last_result: "없음", prompt: "" },
+      process: {
+        step: "capture",
+        detail:
+          "마이크가 연결되었고 사용자의 음성을 실시간으로 수집하고 있습니다.",
+      },
+      systemState: "음성 입력 수집 중",
+      thinkingText: "음성 입력을 기다리고 있습니다.",
+      analysisState: "reset",
+      recording: true,
+      voiceLevel: 0.58,
+    },
+    answer: {
+      name: "answer",
+      llmMode: "local",
+      summary: monitoringSummary,
+      scoreHistory: sharedScoreHistory.slice(0, 3),
+      turnHistory: [baselineTurn],
+      pendingTurns: [overviewPending],
+      recall: { status: "idle", last_result: "없음", prompt: "" },
+      process: {
+        step: "answer",
+        detail:
+          "답변이 먼저 표시되었고, 역할별 위험도 분석을 준비하고 있습니다.",
+      },
+      systemState: "답변 생성 완료",
+      thinkingText: "역할별 언어 특징 분석을 곧 시작합니다.",
+      analysisState: "loading",
+      voiceLevel: 0.06,
+    },
+    "analysis-progress": {
+      name: "analysis-progress",
+      llmMode: "local",
+      summary: monitoringSummary,
+      scoreHistory: sharedScoreHistory.slice(0, 3),
+      turnHistory: [baselineTurn],
+      pendingTurns: [progressPending],
+      recall: { status: "idle", last_result: "없음", prompt: "" },
+      process: {
+        step: "analysis",
+        detail:
+          "질문 반복과 기억 혼란 항목을 반영했고, 나머지 역할 점수를 계속 분석하고 있습니다.",
+      },
+      systemState: "기억 혼란 분석 중",
+      thinkingText:
+        "역할별 결과를 모으는 동안 그래프와 점수 카드가 순차적으로 갱신되고 있습니다.",
+      analysisState: "preview",
+      analysisPreview: {
+        roleResults: {
+          repetition: {
+            score: 15,
+            reason: "이전 질문과 유사한 회의 시간 질문이 다시 등장했습니다.",
+          },
+          memory: {
+            score: 12,
+            reason: "기억이 나지 않는다는 표현이 반복적으로 나타났습니다.",
+          },
+        },
+        currentRole: "memory",
+        completedCount: 2,
+        totalCount: 4,
+      },
+      analysisThinking: true,
+      voiceLevel: 0.06,
+    },
+    final: {
+      name: "final",
+      llmMode: "local",
+      summary: monitoringSummary,
+      scoreHistory: sharedScoreHistory,
+      turnHistory: [baselineTurn, finalTurn],
+      pendingTurns: [],
+      recall: {
+        status: "memorize",
+        last_result: "없음",
+        prompt:
+          "Recall Test: 지금 제시하는 기억 단어는 '사과'입니다. 다음 대화에서 이 단어를 기억해 보세요.",
+      },
+      process: {
+        step: "render",
+        detail:
+          "답변과 분석 카드, 추세 차트, 턴 기록까지 모두 최신 결과로 갱신했습니다.",
+      },
+      systemState: "분석 완료",
+      thinkingText: "가장 최근 대화 기준의 분석 결과를 확인하고 있습니다.",
+      analysisState: "final",
+      analysisTurn: finalTurn,
+      voiceLevel: 0.06,
+    },
+    recall: {
+      name: "recall",
+      llmMode: "local",
+      summary: monitoringSummary,
+      scoreHistory: sharedScoreHistory,
+      turnHistory: [
+        baselineTurn,
+        finalTurn,
+        buildDemoTurn({
+          turn_id: "demo-turn-recall",
+          time: "10:22:04",
+          user_text: "아까 제시한 기억 단어가 뭐였지?",
+          answer:
+            "Recall Test 질문에 답하는 단계입니다. 조금 전에 제시한 기억 단어를 떠올려 보세요.",
+          judgment: "의심",
+          score: 31,
+          reason:
+            "직전 제시 정보와 관련된 회상 질문이 진행 중인 상태를 보여주는 데모 장면입니다.",
+          feature_scores: {
+            repetition: 8,
+            memory: 10,
+            time_confusion: 8,
+            incoherence: 5,
+          },
+          risk_level: "Low Risk",
+          trend: "상승",
+          average_score: monitoringSummary.average_score,
+          recent_average_score: monitoringSummary.recent_average_score,
+        }),
+      ],
+      pendingTurns: [],
+      recall: {
+        status: "ask",
+        last_result: "없음",
+        prompt: "Recall Test: 제가 조금 전에 제시한 기억 단어가 무엇이었나요?",
+      },
+      process: {
+        step: "render",
+        detail: "분석 결과와 함께 Recall Memory Test 단계가 표시되고 있습니다.",
+      },
+      systemState: "Recall Memory Test 진행 중",
+      thinkingText: "기억 단어 회상 여부를 확인하는 단계입니다.",
+      analysisState: "final",
+      analysisTurn: finalTurn,
+      voiceLevel: 0.06,
+    },
+  };
+}
+
+function initializeDemoView() {
+  if (!isDemoMode) {
+    return false;
+  }
+
+  document.body.classList.add("is-demo-mode");
+  if (chatContainer) {
+    chatContainer.classList.add("is-demo-mode");
+  }
+
+  pendingTurns = [];
+  analysisTaskQueue = [];
+  isAnalysisWorkerRunning = false;
+  setRecordButtonBusyState(false);
+  hideWarningPopup();
+  applyDemoScenario(demoMode);
+  return true;
+}
+
+function applyDemoScenario(name = demoMode) {
+  const scenarios = getDemoScenarioMap();
+  const scenario = scenarios[name] || scenarios.overview;
+  const summary = scenario.summary || {
+    average_score: 0,
+    recent_average_score: 0,
+    trend: "데이터 부족",
+  };
+
+  document.body.dataset.demoReady = "false";
+  document.body.dataset.demoScenario = scenario.name;
+
+  llmMode = normalizeLlmMode(scenario.llmMode || "local");
+  localStorage.setItem("llm_mode", llmMode);
+  renderLlmModeState();
+
+  scoreHistory = Array.isArray(scenario.scoreHistory)
+    ? scenario.scoreHistory.map((item) => ({ ...item }))
+    : [];
+  turnHistory = Array.isArray(scenario.turnHistory)
+    ? scenario.turnHistory.map((turn) => ({
+        ...turn,
+        feature_scores: { ...(turn.feature_scores || {}) },
+        follow_up_messages: [...(turn.follow_up_messages || [])],
+      }))
+    : [];
+  pendingTurns = Array.isArray(scenario.pendingTurns)
+    ? scenario.pendingTurns.map((turn) => ({
+        ...turn,
+        follow_up_messages: [...(turn.follow_up_messages || [])],
+        is_pending: true,
+      }))
+    : [];
+  selectedTurnId = null;
+
+  setAnalysisLoadingState(false);
+  setAnalysisThinking(false);
+  setRecordingState(false);
+  stopVoiceAmbient();
+  setVoiceLevel(Number(scenario.voiceLevel ?? 0.06));
+
+  renderAll({
+    average_score: summary.average_score,
+    recent_average_score: summary.recent_average_score,
+    trend: summary.trend,
+  });
+  updateRecallCard(
+    scenario.recall || { status: "idle", last_result: "없음", prompt: "" },
+  );
+
+  if (turnHistory.length > 0 || pendingTurns.length > 0) {
+    renderConversationHistory({
+      preferLatestTurn: true,
+      preserveAnalysisCard: true,
+    });
+  } else {
+    renderChatEmptyState();
+    resetAnalysisCard();
+  }
+
+  if (scenario.analysisState === "loading") {
+    if (analysisJudgmentEl) analysisJudgmentEl.innerText = "분석 중";
+    if (analysisRiskLevelEl) analysisRiskLevelEl.innerText = "대기";
+    if (analysisTrendEl) analysisTrendEl.innerText = "진행 중";
+    if (analysisReasonEl) {
+      analysisReasonEl.innerText =
+        "답변은 먼저 생성되었고, 역할별 위험도 분석을 순차적으로 시작하고 있습니다.";
+    }
+    setAnalysisScoreDisplay("-", false);
+    updateFeatureBreakdown({});
+    updateConfidence({}, 0, false);
+    setAnalysisStateBadge(
+      "분석 대기",
+      "idle",
+      "답변 표시 후 역할별 분석이 시작되는 장면입니다.",
+    );
+    setAnalysisLoadingState(true);
+  } else if (scenario.analysisState === "preview" && scenario.analysisPreview) {
+    applyProgressiveAnalysisPreview(
+      scenario.analysisPreview.roleResults,
+      scenario.analysisPreview.currentRole,
+      scenario.analysisPreview.completedCount,
+      scenario.analysisPreview.totalCount,
+    );
+    applyProgressiveSummaryPreview(scenario.analysisPreview.roleResults);
+  } else if (scenario.analysisState === "final" && scenario.analysisTurn) {
+    applyTurnAnalysis(scenario.analysisTurn);
+  } else {
+    resetAnalysisCard();
+    updateFeatureBreakdown({});
+    updateConfidence({}, 0, false);
+  }
+
+  if (scenario.recording) {
+    setRecordingState(true);
+  }
+
+  if (scenario.analysisThinking) {
+    setAnalysisThinking(true);
+  }
+
+  if (scenario.process?.step) {
+    setProcessState(scenario.process.step, scenario.process.detail || "");
+  } else {
+    resetProcessState(
+      scenario.process?.detail ||
+        "대기 중입니다. 녹음을 시작하면 음성 입력을 기다립니다.",
+    );
+  }
+
+  setSystemState(scenario.systemState || "데모 화면");
+  setThinkingMessage(scenario.thinkingText || "문서 촬영용 데모 상태입니다.");
+
+  window.setTimeout(() => {
+    document.body.dataset.demoReady = "true";
+    window.dispatchEvent(
+      new CustomEvent("ncai:demo-ready", { detail: { name: scenario.name } }),
+    );
+  }, 80);
+
+  return scenario;
+}
+
+window.__ncaiDemo = {
+  isDemoMode,
+  applyScenario: applyDemoScenario,
+  scenarioNames: Object.keys(getDemoScenarioMap()),
+};
 
 function setVoiceLevel(level = 0.06) {
   const normalizedLevel = Math.max(0.06, Math.min(1, Number(level) || 0.06));
@@ -139,6 +621,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   updateRecordToggleButton();
   resetProcessState("대기 중입니다. 녹음을 시작하면 음성 입력을 기다립니다.");
+  if (initializeDemoView()) {
+    return;
+  }
   await loadLlmProviderStatus();
   await loadScoreHistory();
 });
