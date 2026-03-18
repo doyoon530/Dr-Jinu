@@ -182,7 +182,8 @@ async function buildGif() {
 }
 
 async function prepareScenario(page, scenarioName) {
-  const targetUrl = `${baseUrl}/?demo=${encodeURIComponent(scenarioName)}`;
+  const targetUrl =
+    `${baseUrl}/?demo=${encodeURIComponent(scenarioName)}` + "&capture=docs";
   await page.goto(targetUrl, { waitUntil: "networkidle" });
   await page.waitForFunction(
     (expectedScenario) =>
