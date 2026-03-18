@@ -1,13 +1,13 @@
 @echo off
 setlocal
 
-ruff check --fix app.py
+python -m ruff check --fix app.py ncai_app
 if errorlevel 1 exit /b %errorlevel%
 
-ruff format app.py
+python -m ruff format app.py ncai_app
 if errorlevel 1 exit /b %errorlevel%
 
-prettier --write "templates/**/*.html" "static/**/*.css" "static/**/*.js"
+"%ProgramFiles%\nodejs\node.exe" "%~dp0node_modules\prettier\bin\prettier.cjs" --write "templates/**/*.html" "static/**/*.css" "static/**/*.js"
 if errorlevel 1 exit /b %errorlevel%
 
 echo Formatting completed.
