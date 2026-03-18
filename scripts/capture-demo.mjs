@@ -11,13 +11,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const imageOutputDir = path.join(projectRoot, "docs", "images");
-const mediaOutputDir = path.join(projectRoot, "docs", "media");
 const baseUrl = process.env.CAPTURE_BASE_URL || "http://127.0.0.1:5000";
 const browserChannel = process.env.CAPTURE_BROWSER_CHANNEL || "msedge";
 const pythonCommand = process.env.PYTHON || "python";
 const ffmpegCommand = process.env.FFMPEG || "ffmpeg";
 const gifOutputPath = path.join(imageOutputDir, "demo-flow.gif");
-const mp4OutputPath = path.join(mediaOutputDir, "demo-flow.mp4");
 
 const scenarios = [
   { name: "overview", file: "01-overview.png" },
@@ -59,7 +57,6 @@ function startServerProcess() {
 
 async function ensureOutputDirectory() {
   await fs.mkdir(imageOutputDir, { recursive: true });
-  await fs.mkdir(mediaOutputDir, { recursive: true });
 }
 
 function runCommand(command, args, options = {}) {
@@ -83,7 +80,7 @@ function runCommand(command, args, options = {}) {
 }
 
 async function buildGif() {
-  const manifestPath = path.join(mediaOutputDir, "demo-flow.frames.txt");
+  const manifestPath = path.join(imageOutputDir, "demo-flow.frames.txt");
   const manifestLines = [];
 
   for (const [index, scenario] of scenarios.entries()) {
@@ -115,55 +112,6 @@ async function buildGif() {
       "-filter_complex",
       "fps=8,scale=1400:-1:flags=lanczos,split[s0][s1];[s0]palettegen=reserve_transparent=0[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5",
       gifOutputPath,
-    ]);
-  } finally {
-    await fs.rm(manifestPath, { force: true });
-  }
-}
-
-async function buildMp4() {
-  const manifestPath = path.join(mediaOutputDir, "demo-flow-video.frames.txt");
-  const manifestLines = [];
-
-  for (const [index, scenario] of scenarios.entries()) {
-    const framePath = path
-      .join(imageOutputDir, scenario.file)
-      .replace(/\\/g, "/");
-    const duration = index === scenarios.length - 1 ? 2.0 : 1.35;
-
-    manifestLines.push(`file '${framePath}'`);
-    manifestLines.push(`duration ${duration}`);
-  }
-
-  const lastFramePath = path
-    .join(imageOutputDir, scenarios[scenarios.length - 1].file)
-    .replace(/\\/g, "/");
-  manifestLines.push(`file '${lastFramePath}'`);
-
-  await fs.writeFile(manifestPath, `${manifestLines.join("\n")}\n`, "utf8");
-
-  try {
-    await runCommand(ffmpegCommand, [
-      "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      manifestPath,
-      "-vf",
-      "scale=1600:-2:flags=lanczos,format=yuv420p",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "medium",
-      "-crf",
-      "22",
-      "-movflags",
-      "+faststart",
-      "-fps_mode",
-      "vfr",
-      mp4OutputPath,
     ]);
   } finally {
     await fs.rm(manifestPath, { force: true });
@@ -218,8 +166,6 @@ async function captureScreenshots() {
     await context.close();
     await buildGif();
     console.log(`[capture] GIF 저장 완료: ${gifOutputPath}`);
-    await buildMp4();
-    console.log(`[capture] MP4 저장 완료: ${mp4OutputPath}`);
   } finally {
     await browser.close();
 
