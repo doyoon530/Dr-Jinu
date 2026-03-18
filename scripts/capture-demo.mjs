@@ -16,6 +16,10 @@ const browserChannel = process.env.CAPTURE_BROWSER_CHANNEL || "msedge";
 const pythonCommand = process.env.PYTHON || "python";
 const ffmpegCommand = process.env.FFMPEG || "ffmpeg";
 const gifOutputPath = path.join(imageOutputDir, "demo-flow.gif");
+const statusCardGifOutputPath = path.join(
+  imageOutputDir,
+  "card-status-risk.gif",
+);
 
 const scenarioShots = [
   { name: "overview", file: "01-overview.png" },
@@ -86,6 +90,49 @@ const cardShots = [
     selector: "#recallDisclosure",
     file: "card-recall-test.png",
     setup: async (page) => openDisclosure(page, "#recallDisclosure"),
+  },
+];
+
+const statusCardStates = [
+  {
+    key: "safe",
+    cssClass: "risk-safe",
+    text: "정상",
+    desc: "안정적인 상태입니다.",
+    iconSrc: "/static/3d-icons/status-safe.png",
+    iconAlt: "정상 상태 아이콘",
+  },
+  {
+    key: "low",
+    cssClass: "risk-low",
+    text: "낮은 위험",
+    desc: "경미한 변화가 보입니다.",
+    iconSrc: "/static/3d-icons/status-low.png",
+    iconAlt: "낮은 위험 상태 아이콘",
+  },
+  {
+    key: "warning",
+    cssClass: "risk-warning",
+    text: "주의",
+    desc: "지속 관찰이 필요합니다.",
+    iconSrc: "/static/3d-icons/status-warning.png",
+    iconAlt: "주의 상태 아이콘",
+  },
+  {
+    key: "high",
+    cssClass: "risk-high",
+    text: "위험",
+    desc: "상당한 위험 신호가 있습니다.",
+    iconSrc: "/static/3d-icons/status-high.png",
+    iconAlt: "위험 상태 아이콘",
+  },
+  {
+    key: "critical",
+    cssClass: "risk-critical",
+    text: "매우 위험",
+    desc: "즉각적인 관찰이 필요합니다.",
+    iconSrc: "/static/3d-icons/status-critical.png",
+    iconAlt: "매우 위험 상태 아이콘",
   },
 ];
 
@@ -181,6 +228,104 @@ async function buildGif() {
   }
 }
 
+async function setStatusCardState(page, state) {
+  await page.evaluate((payload) => {
+    const statusCard = document.querySelector("#statusCard");
+    const riskText = document.querySelector("#riskText");
+    const riskDescription = document.querySelector("#riskDescription");
+
+    if (!statusCard || !riskText || !riskDescription) {
+      return;
+    }
+
+    statusCard.classList.remove(
+      "risk-safe",
+      "risk-low",
+      "risk-warning",
+      "risk-high",
+      "risk-critical",
+    );
+    statusCard.classList.add(payload.cssClass);
+
+    riskText.textContent = payload.text;
+    riskDescription.textContent = payload.desc;
+
+    let visual = statusCard.querySelector(".status-card-visual");
+    if (!visual) {
+      visual = document.createElement("div");
+      visual.className = "status-card-visual";
+      statusCard.appendChild(visual);
+    }
+
+    let image = visual.querySelector(".status-card-visual-image");
+    if (!image) {
+      image = document.createElement("img");
+      image.className = "status-card-visual-image";
+      visual.appendChild(image);
+    }
+
+    image.setAttribute("src", payload.iconSrc);
+    image.setAttribute("alt", payload.iconAlt);
+  }, state);
+}
+
+async function buildStatusCardGif(page) {
+  const framesDir = path.join(imageOutputDir, ".status-card-frames");
+  const manifestPath = path.join(imageOutputDir, "status-card-risk.frames.txt");
+  await fs.mkdir(framesDir, { recursive: true });
+
+  try {
+    await prepareScenario(page, "final");
+    const locator = page.locator("#statusCard");
+    const manifestLines = [];
+
+    for (const [index, state] of statusCardStates.entries()) {
+      await setStatusCardState(page, state);
+      await page.waitForTimeout(220);
+
+      const framePath = path.join(
+        framesDir,
+        `${String(index + 1).padStart(2, "0")}-${state.key}.png`,
+      );
+      await locator.screenshot({
+        path: framePath,
+        animations: "disabled",
+      });
+
+      const gifFramePath = framePath.replace(/\\/g, "/");
+      const duration = index === statusCardStates.length - 1 ? 1.15 : 0.9;
+      manifestLines.push(`file '${gifFramePath}'`);
+      manifestLines.push(`duration ${duration}`);
+    }
+
+    const lastFramePath = path
+      .join(
+        framesDir,
+        `${String(statusCardStates.length).padStart(2, "0")}-${statusCardStates.at(-1).key}.png`,
+      )
+      .replace(/\\/g, "/");
+    manifestLines.push(`file '${lastFramePath}'`);
+
+    await fs.writeFile(manifestPath, `${manifestLines.join("\n")}\n`, "utf8");
+
+    await runCommand(ffmpegCommand, [
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      manifestPath,
+      "-filter_complex",
+      "fps=8,split[s0][s1];[s0]palettegen=reserve_transparent=0[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5",
+      statusCardGifOutputPath,
+    ]);
+  } finally {
+    await fs.rm(manifestPath, { force: true }).catch(() => {});
+    await fs.rm(framesDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function prepareScenario(page, scenarioName) {
   const targetUrl =
     `${baseUrl}/?demo=${encodeURIComponent(scenarioName)}` + "&capture=docs";
@@ -264,10 +409,14 @@ async function captureScreenshots() {
 
     await captureFullScreenshots(page);
     await captureCardScreenshots(page);
+    await buildStatusCardGif(page);
     await context.close();
 
     await buildGif();
     console.log(`[capture] GIF 저장 완료: ${gifOutputPath}`);
+    console.log(
+      `[capture] 상태 카드 GIF 저장 완료: ${statusCardGifOutputPath}`,
+    );
   } finally {
     await browser.close();
 
