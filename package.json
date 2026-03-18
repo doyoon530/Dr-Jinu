@@ -2,11 +2,14 @@
   "name": "ncai-dementia-risk-monitor",
   "private": true,
   "scripts": {
-    "lint": "ruff check app.py && python -m py_compile app.py && prettier --check \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
-    "format": "ruff check --fix app.py && ruff format app.py && prettier --write \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
-    "lint:py": "ruff check app.py && python -m py_compile app.py",
-    "lint:web": "prettier --check \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
-    "format:py": "ruff check --fix app.py && ruff format app.py",
-    "format:web": "prettier --write \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\""
+    "lint": "python -m ruff check app.py ncai_app && python -m compileall -q app.py ncai_app && set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --check \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
+    "format": "python -m ruff check --fix app.py ncai_app && python -m ruff format app.py ncai_app && set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --write \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
+    "lint:py": "python -m ruff check app.py ncai_app && python -m compileall -q app.py ncai_app",
+    "lint:web": "set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --check \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\"",
+    "format:py": "python -m ruff check --fix app.py ncai_app && python -m ruff format app.py ncai_app",
+    "format:web": "set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --write \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\""
+  },
+  "devDependencies": {
+    "prettier": "^3.8.1"
   }
 }
