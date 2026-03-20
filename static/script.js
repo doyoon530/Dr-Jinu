@@ -1810,10 +1810,10 @@ function buildTimelineSparklineMarkup(points) {
       role="img"
     >
       <defs>
-        <linearGradient id="timelineSparkAreaGradient" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#79c9ff" stop-opacity="0.34"></stop>
-          <stop offset="100%" stop-color="#79c9ff" stop-opacity="0.02"></stop>
-        </linearGradient>
+          <linearGradient id="timelineSparkAreaGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#82d6f6" stop-opacity="0.34"></stop>
+            <stop offset="100%" stop-color="#82d6f6" stop-opacity="0.02"></stop>
+          </linearGradient>
       </defs>
       ${gridLines}
       <path class="analysis-timeline-area" d="${areaPath}"></path>
@@ -4339,7 +4339,7 @@ function getRiskInfo(score) {
       text: "정상",
       desc: "안정적인 상태입니다.",
       cssClass: "risk-safe",
-      color: "#2fd18b",
+      color: "#1897d1",
       iconKey: "safe",
       iconAlt: "정상 상태 아이콘",
     };
@@ -4350,7 +4350,7 @@ function getRiskInfo(score) {
       text: "낮은 위험",
       desc: "경미한 변화가 보입니다.",
       cssClass: "risk-low",
-      color: "#79c9ff",
+      color: "#82d6f6",
       iconKey: "low",
       iconAlt: "낮은 위험 상태 아이콘",
     };
@@ -4361,7 +4361,7 @@ function getRiskInfo(score) {
       text: "주의",
       desc: "지속 관찰이 필요합니다.",
       cssClass: "risk-warning",
-      color: "#ffb347",
+      color: "#c5b47b",
       iconKey: "warning",
       iconAlt: "주의 상태 아이콘",
     };
@@ -4372,7 +4372,7 @@ function getRiskInfo(score) {
       text: "위험",
       desc: "상당한 위험 신호가 있습니다.",
       cssClass: "risk-high",
-      color: "#ff7b7b",
+      color: "#8b7752",
       iconKey: "high",
       iconAlt: "위험 상태 아이콘",
     };
@@ -4595,7 +4595,7 @@ function updateRadarChart(repetition, memory, timeConfusion, incoherence) {
             borderColor: "#d7b26d",
             backgroundColor: "rgba(121, 201, 255, 0.14)",
             borderWidth: 2,
-            pointBackgroundColor: "#79c9ff",
+            pointBackgroundColor: "#82d6f6",
           },
         ],
       },
