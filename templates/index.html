@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
@@ -11,6 +11,21 @@
     <div class="bg-orb orb-1"></div>
     <div class="bg-orb orb-2"></div>
     <div class="bg-orb orb-3"></div>
+
+    <button
+      id="mobileMenuToggle"
+      class="mobile-menu-toggle"
+      type="button"
+      aria-label="모바일 메뉴 열기"
+      aria-controls="mobileTabbar"
+      aria-expanded="false"
+    >
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+
+    <div id="mobileMenuScrim" class="mobile-menu-scrim hidden"></div>
 
     <div id="warningPopup" class="warning-popup hidden">
       <div class="warning-popup-content glass-card">
@@ -54,10 +69,10 @@
         <div class="report-hero">
           <div>
             <div class="report-hero-title" id="reportHeadline">
-              대화 세션 요약
+              세션 분석 요약
             </div>
             <div class="report-hero-copy" id="reportSubtext">
-              대화를 시작하면 세션 리포트가 이곳에 정리됩니다.
+              대화를 시작하면 세션 리포트가 이곳에 자동으로 정리됩니다.
             </div>
           </div>
           <span class="report-status-badge is-idle" id="reportStatusBadge"
@@ -124,14 +139,14 @@
             <div class="report-recall-box">
               <div class="report-recall-title">기억 회상 테스트</div>
               <div class="report-recall-copy" id="reportRecallSummary">
-                아직 진행 중인 기억 테스트가 없습니다.
+                아직 진행 중인 기억 회상 테스트가 없습니다.
               </div>
             </div>
           </section>
         </div>
 
         <section class="report-section">
-          <div class="report-section-title">턴별 분석 기록</div>
+          <div class="report-section-title">전체 분석 기록</div>
           <div class="report-turn-list" id="reportTurnList"></div>
         </section>
 
@@ -141,7 +156,7 @@
             class="record-btn secondary-btn"
             type="button"
           >
-            출력
+            異쒕젰
           </button>
           <button
             id="closeSessionReportFooter"
@@ -155,7 +170,7 @@
     </div>
 
     <div class="layout">
-      <aside class="sidebar glass-panel">
+      <aside class="sidebar glass-panel" data-mobile-panel="dashboard">
         <div class="sidebar-header">
           <div class="sidebar-brand">
             <div class="sidebar-brand-mark brand-logo" aria-hidden="true">
@@ -262,7 +277,7 @@
 
       <main class="main">
         <section class="workspace">
-          <section class="chat-section">
+          <section class="chat-section" data-mobile-panel="chat">
             <div class="title-container chat-title">
               <h3>NCAI</h3>
               <h1>음성 인식 치매 위험도 분석 시스템</h1>
@@ -367,7 +382,11 @@
                   </div>
 
                   <div id="aiThinking" class="ai-thinking hidden">
-                    AI 언어 패턴 분석 중...
+                    AI 언어 특성 분석 중...
+                  </div>
+
+                  <div id="mobileProcessBadge" class="mobile-process-badge">
+                    대기
                   </div>
                 </div>
 
@@ -430,8 +449,7 @@
                     class="workspace-overview-copy"
                     id="workspaceOverviewCopy"
                   >
-                    녹음을 시작하면 답변과 역할별 분석 흐름이 이 영역에
-                    요약됩니다.
+                    녹음을 시작하면 답변과 역할별 분석 흐름이 이곳에 요약됩니다.
                   </div>
                 </div>
 
@@ -463,7 +481,7 @@
                     class="workspace-overview-copy"
                     id="workspaceOverviewRecallMeta"
                   >
-                    현재 회상 테스트 상태와 최근 결과를 함께 보여줍니다.
+                    현재 회상 테스트 상태와 최근 결과를 간단히 보여줍니다.
                   </div>
                 </div>
               </div>
@@ -547,7 +565,29 @@
             </div>
           </section>
 
-          <aside class="analysis-side">
+          <section
+            class="mobile-manage-panel glass-panel"
+            data-mobile-panel="manage"
+          >
+            <div class="mobile-manage-actions">
+              <button
+                id="mobileOpenSessionReport"
+                class="record-btn neutral-btn mobile-manage-action"
+                type="button"
+              >
+                세션 리포트
+              </button>
+              <button
+                id="mobileResetHistory"
+                class="record-btn danger-btn mobile-manage-action"
+                type="button"
+              >
+                기록 초기화
+              </button>
+            </div>
+          </section>
+
+          <aside class="analysis-side" data-mobile-panel="analysis">
             <div class="analysis-panel-right">
               <div
                 class="analysis-card glass-card analysis-hero-card is-primary-surface"
@@ -633,7 +673,7 @@
                             class="analysis-timeline-spark-copy"
                             id="timelineTrendCopy"
                           >
-                            최근 반영 점수가 2건 이상 쌓이면 흐름을 함께
+                            최근 반영 점수가 2건 이상 쌓이면 흐름을 간단히
                             보여줍니다.
                           </div>
                         </div>
@@ -811,7 +851,7 @@
                     <span class="panel-disclosure-kicker">회상 검사</span>
                     <strong>기억 회상 테스트 펼치기</strong>
                     <small
-                      >진행 중일 때 자동으로 열리고, 평소에는 접혀
+                      >진행 중일 때는 자동으로 열리고, 평소에는 접혀
                       있습니다.</small
                     >
                   </div>
@@ -839,7 +879,7 @@
                     <div class="analysis-reason">
                       <div class="analysis-label reason-label">안내</div>
                       <div class="analysis-reason-box" id="recallPrompt">
-                        아직 진행 중인 기억 테스트가 없습니다.
+                        아직 진행 중인 기억 회상 테스트가 없습니다.
                       </div>
                     </div>
                   </div>
@@ -850,6 +890,51 @@
         </section>
       </main>
     </div>
+
+    <nav id="mobileTabbar" class="mobile-tabbar" aria-label="모바일 섹션 전환">
+      <div class="mobile-tabbar-head">
+        <div>
+          <div class="mobile-tabbar-kicker">모바일 메뉴</div>
+          <div class="mobile-tabbar-title">원하는 화면으로 이동합니다.</div>
+        </div>
+        <button
+          id="mobileMenuClose"
+          class="mobile-menu-close"
+          type="button"
+          aria-label="모바일 메뉴 닫기"
+        >
+          ×
+        </button>
+      </div>
+      <button
+        type="button"
+        class="mobile-tab-btn"
+        data-mobile-tab-target="dashboard"
+      >
+        <span class="mobile-tab-btn-label">대시보드</span>
+      </button>
+      <button
+        type="button"
+        class="mobile-tab-btn"
+        data-mobile-tab-target="chat"
+      >
+        <span class="mobile-tab-btn-label">대화</span>
+      </button>
+      <button
+        type="button"
+        class="mobile-tab-btn"
+        data-mobile-tab-target="analysis"
+      >
+        <span class="mobile-tab-btn-label">분석</span>
+      </button>
+      <button
+        type="button"
+        class="mobile-tab-btn"
+        data-mobile-tab-target="manage"
+      >
+        <span class="mobile-tab-btn-label">관리</span>
+      </button>
+    </nav>
 
     <script src="/static/script.js"></script>
   </body>
