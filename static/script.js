@@ -6,6 +6,7 @@ let analysisGeneration = Number(
   localStorage.getItem("analysis_generation") || 0,
 );
 let llmMode = localStorage.getItem("llm_mode") || "local";
+let activeMobileTab = localStorage.getItem("mobile_active_tab") || "chat";
 let llmProviderStatus = null;
 
 let scoreHistory = [];
@@ -48,6 +49,7 @@ const chatContainer = document.getElementById("chatContainer");
 const chatWindow = document.getElementById("chatWindow");
 const recordingIndicator = document.getElementById("recordingIndicator");
 const aiThinking = document.getElementById("aiThinking");
+const mobileProcessBadgeEl = document.getElementById("mobileProcessBadge");
 const systemStateText = document.getElementById("systemStateText");
 const processDetailEl = document.getElementById("processDetail");
 const processSteps = Array.from(document.querySelectorAll(".process-step"));
@@ -107,9 +109,13 @@ const warningPopup = document.getElementById("warningPopup");
 const warningPopupText = document.getElementById("warningPopupText");
 const closeWarningPopupButton = document.getElementById("closeWarningPopup");
 const openSessionReportButton = document.getElementById("openSessionReport");
+const mobileOpenSessionReportButton = document.getElementById(
+  "mobileOpenSessionReport",
+);
 const openSessionReportInlineButton = document.getElementById(
   "openSessionReportInline",
 );
+const mobileResetHistoryButton = document.getElementById("mobileResetHistory");
 const sessionReportModal = document.getElementById("sessionReportModal");
 const closeSessionReportButton = document.getElementById("closeSessionReport");
 const closeSessionReportFooterButton = document.getElementById(
@@ -181,6 +187,15 @@ const analysisDetailDisclosureEl = document.getElementById(
   "analysisDetailDisclosure",
 );
 const recallDisclosureEl = document.getElementById("recallDisclosure");
+const mobileMenuToggleButton = document.getElementById("mobileMenuToggle");
+const mobileMenuCloseButton = document.getElementById("mobileMenuClose");
+const mobileMenuScrim = document.getElementById("mobileMenuScrim");
+const mobileTabbarEl = document.getElementById("mobileTabbar");
+const mobileTabButtons = Array.from(
+  document.querySelectorAll("[data-mobile-tab-target]"),
+);
+const MOBILE_TAB_BREAKPOINT = 760;
+let isMobileMenuOpen = false;
 const THREE_D_ICON_PATHS = {
   status: {
     safe: "/static/3d-icons/status-safe.png",
@@ -197,6 +212,13 @@ const THREE_D_ICON_PATHS = {
 };
 
 const processStepOrder = ["capture", "stt", "answer", "analysis", "render"];
+const processStepLabels = {
+  capture: "음성 수신",
+  stt: "음성 인식",
+  answer: "답변 생성",
+  analysis: "위험도 분석",
+  render: "화면 반영",
+};
 const analysisRoleOrder = [
   "repetition",
   "memory",
@@ -218,6 +240,113 @@ const isDocsCapture = captureMode === "docs";
 if (isDocsCapture) {
   document.body.classList.add("is-docs-capture");
   document.body.dataset.captureMode = captureMode;
+}
+
+function isMobileTabViewport() {
+  return window.innerWidth <= MOBILE_TAB_BREAKPOINT;
+}
+
+function applyMobileTabState() {
+  const isEnabled = isMobileTabViewport() && !isDocsCapture;
+  document.body.classList.toggle("is-mobile-tabbed", isEnabled);
+
+  if (!isEnabled) {
+    setMobileMenuOpen(false);
+    document.body.removeAttribute("data-mobile-tab");
+    mobileTabButtons.forEach((button) => {
+      button.classList.remove("is-active");
+      button.setAttribute("aria-selected", "false");
+      button.setAttribute("tabindex", "-1");
+    });
+    return;
+  }
+
+  const availableTabs = new Set(["dashboard", "chat", "analysis", "manage"]);
+  if (!availableTabs.has(activeMobileTab)) {
+    activeMobileTab = "chat";
+  }
+
+  document.body.dataset.mobileTab = activeMobileTab;
+  mobileTabButtons.forEach((button) => {
+    const isActive = button.dataset.mobileTabTarget === activeMobileTab;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.setAttribute("tabindex", isActive ? "0" : "-1");
+  });
+}
+
+function setMobileMenuOpen(nextOpen) {
+  const shouldOpen =
+    Boolean(nextOpen) && isMobileTabViewport() && !isDocsCapture;
+  isMobileMenuOpen = shouldOpen;
+
+  document.body.classList.toggle("is-mobile-menu-open", shouldOpen);
+
+  if (mobileMenuToggleButton) {
+    mobileMenuToggleButton.setAttribute(
+      "aria-expanded",
+      shouldOpen ? "true" : "false",
+    );
+  }
+
+  if (mobileMenuScrim) {
+    mobileMenuScrim.classList.toggle("hidden", !shouldOpen);
+  }
+}
+
+function closeMobileMenu() {
+  setMobileMenuOpen(false);
+}
+
+function toggleMobileMenu() {
+  setMobileMenuOpen(!isMobileMenuOpen);
+}
+
+function setActiveMobileTab(
+  tabName,
+  { persist = true, scrollToTop = true } = {},
+) {
+  if (!tabName) {
+    return;
+  }
+
+  activeMobileTab = tabName;
+
+  if (persist) {
+    localStorage.setItem("mobile_active_tab", activeMobileTab);
+  }
+
+  applyMobileTabState();
+
+  if (scrollToTop && isMobileTabViewport()) {
+    window.scrollTo({
+      top: 0,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  }
+}
+
+function initializeMobileTabs() {
+  if (!mobileTabbarEl || mobileTabButtons.length === 0) {
+    return;
+  }
+
+  mobileTabbarEl.setAttribute("role", "tablist");
+
+  mobileTabButtons.forEach((button) => {
+    button.setAttribute("role", "tab");
+    button.addEventListener("click", () => {
+      const target = button.dataset.mobileTabTarget;
+      if (target) {
+        setActiveMobileTab(target);
+        closeMobileMenu();
+      }
+    });
+  });
+
+  applyMobileTabState();
 }
 
 function clearScoreCascadeTimers() {
@@ -371,6 +500,16 @@ function triggerAnalysisScoreCascade(data) {
   if ((data?.score ?? 0) > 0) {
     scheduleCascadePulse(analysisReasonBoxEl, 860, "is-focus-tracked");
   }
+}
+
+function setMobileProcessBadge(text, tone = "idle") {
+  if (!mobileProcessBadgeEl) {
+    return;
+  }
+
+  mobileProcessBadgeEl.innerText = text || "대기";
+  mobileProcessBadgeEl.classList.remove("is-idle", "is-active", "is-error");
+  mobileProcessBadgeEl.classList.add(`is-${tone}`);
 }
 
 function createDemoScoreHistory(scores = [], labels = []) {
@@ -925,6 +1064,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   normalizeCollapsibleLayout();
   injectThreeDIcons();
   bindEvents();
+  initializeMobileTabs();
   initializeDisclosureSurfaces();
   positionTimelineCardNearRecall();
   setupAnalysisHelpPopovers();
@@ -944,8 +1084,14 @@ function bindEvents() {
   if (resetButton) resetButton.onclick = resetHistory;
   if (openSessionReportButton)
     openSessionReportButton.onclick = openSessionReport;
+  if (mobileOpenSessionReportButton)
+    mobileOpenSessionReportButton.onclick = openSessionReport;
   if (openSessionReportInlineButton)
     openSessionReportInlineButton.onclick = openSessionReport;
+  if (mobileResetHistoryButton) mobileResetHistoryButton.onclick = resetHistory;
+  if (mobileMenuToggleButton) mobileMenuToggleButton.onclick = toggleMobileMenu;
+  if (mobileMenuCloseButton) mobileMenuCloseButton.onclick = closeMobileMenu;
+  if (mobileMenuScrim) mobileMenuScrim.onclick = closeMobileMenu;
   if (llmModeLocalButton)
     llmModeLocalButton.onclick = () => setLlmMode("local");
   if (llmModeApiButton) llmModeApiButton.onclick = () => setLlmMode("api");
@@ -965,7 +1111,10 @@ function bindEvents() {
     };
   }
   window.addEventListener("keydown", handleGlobalKeydown);
-  window.addEventListener("resize", repositionActiveHelpPopovers);
+  window.addEventListener("resize", () => {
+    repositionActiveHelpPopovers();
+    applyMobileTabState();
+  });
   window.addEventListener("scroll", repositionActiveHelpPopovers, true);
 }
 
@@ -1328,6 +1477,11 @@ function handleGlobalKeydown(event) {
     return;
   }
 
+  if (isMobileMenuOpen) {
+    closeMobileMenu();
+    return;
+  }
+
   hideWarningPopup();
 }
 
@@ -1596,6 +1750,10 @@ function updateSessionReportButtonState() {
 
   if (openSessionReportButton) {
     openSessionReportButton.disabled = isDisabled;
+  }
+
+  if (mobileOpenSessionReportButton) {
+    mobileOpenSessionReportButton.disabled = isDisabled;
   }
 
   if (openSessionReportInlineButton) {
@@ -2914,6 +3072,8 @@ function setProcessState(step, detail = "") {
   if (processDetailEl) {
     processDetailEl.innerText = detail || "처리 중입니다.";
   }
+
+  setMobileProcessBadge(processStepLabels[step] || "처리 중", "active");
 }
 
 function setProcessError(detail) {
@@ -2931,6 +3091,8 @@ function setProcessError(detail) {
   if (processDetailEl) {
     processDetailEl.innerText = detail || "오류가 발생했습니다.";
   }
+
+  setMobileProcessBadge("오류", "error");
 }
 
 function resetProcessState(detail = "대기 중입니다.") {
@@ -2943,6 +3105,8 @@ function resetProcessState(detail = "대기 중입니다.") {
   if (processDetailEl) {
     processDetailEl.innerText = detail;
   }
+
+  setMobileProcessBadge("대기", "idle");
 }
 
 function stopRecording() {
@@ -2963,6 +3127,9 @@ function stopRecording() {
 
 async function resetHistory() {
   try {
+    if (isMobileTabViewport()) {
+      setActiveMobileTab("chat", { persist: true, scrollToTop: false });
+    }
     closeSessionReport();
     hideAnalysisCompletionAnimation();
     clearScoreCascadeTimers();
@@ -3599,6 +3766,13 @@ function selectTurnById(turnId, options = {}) {
   const turn = turnHistory.find((item) => item.turn_id === turnId);
   if (!turn) {
     return;
+  }
+
+  if (isMobileTabViewport()) {
+    setActiveMobileTab("analysis", {
+      persist: true,
+      scrollToTop: false,
+    });
   }
 
   runWithViewTransition(() => {
