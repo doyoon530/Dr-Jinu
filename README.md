@@ -159,7 +159,7 @@ flowchart TD
 
 #### 1. 누적 위험 상태 카드
 
-![누적 위험 상태 카드](docs/images/card-status-risk.gif)
+![누적 위험 상태 카드](docs/images/card-status-risk.png)
 
 현재 세션의 누적 위험 상태를 가장 먼저 보여주는 핵심 카드입니다.  
 상태명과 보조 설명을 함께 제시하여 전체 상태를 즉시 파악할 수 있도록 구성했습니다.
@@ -279,7 +279,6 @@ ncai-dementia-risk-monitor/
 │  ├─ runtime.py
 │  └─ common.py
 ├─ scripts/
-│  └─ capture-demo.mjs
 ├─ static/
 │  ├─ script.js
 │  ├─ style.css
