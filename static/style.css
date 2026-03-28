@@ -1321,15 +1321,17 @@ body::after {
 }
 
 body.is-docs-capture .chat-section {
-  gap: 12px;
+  gap: 8px;
   position: static;
   top: auto;
   height: auto;
   overflow: visible;
+  margin-top: -28px;
 }
 
 body.is-docs-capture .chat-title {
-  padding: 0 4px 2px;
+  padding: 0 4px 0;
+  margin-top: -4px;
   text-align: center;
 }
 
@@ -1338,14 +1340,14 @@ body.is-docs-capture .title-container {
 }
 
 body.is-docs-capture .title-container h3 {
-  margin-bottom: 5px;
+  margin-bottom: 3px;
   letter-spacing: 2.4px;
 }
 
 body.is-docs-capture .title-container h1 {
-  margin-bottom: 6px;
-  font-size: clamp(28px, 1.9vw, 34px);
-  line-height: 1.08;
+  margin-bottom: 4px;
+  font-size: clamp(26px, 1.75vw, 31px);
+  line-height: 1.02;
   text-align: center;
   margin-left: auto;
   margin-right: auto;
@@ -1355,12 +1357,12 @@ body.is-docs-capture .title-container p {
   max-width: none;
   margin-left: auto;
   margin-right: auto;
-  line-height: 1.45;
+  line-height: 1.28;
   text-align: center;
 }
 
 body.is-docs-capture .workspace-overview {
-  padding-top: 10px;
+  padding-top: 4px;
 }
 
 body.is-docs-capture .chat-container {
