@@ -4,14 +4,12 @@
   "scripts": {
     "lint": "python -m ruff check app.py ncai_app && python -m compileall -q app.py ncai_app && set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --check \"README.md\" \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\" \"scripts/**/*.mjs\"",
     "format": "python -m ruff check --fix app.py ncai_app && python -m ruff format app.py ncai_app && set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --write \"README.md\" \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\" \"scripts/**/*.mjs\"",
-    "capture:docs": "set PATH=%ProgramFiles%\\nodejs;%PATH% && node scripts/capture-demo.mjs",
     "lint:py": "python -m ruff check app.py ncai_app && python -m compileall -q app.py ncai_app",
     "lint:web": "set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --check \"README.md\" \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\" \"scripts/**/*.mjs\"",
     "format:py": "python -m ruff check --fix app.py ncai_app && python -m ruff format app.py ncai_app",
     "format:web": "set PATH=%ProgramFiles%\\nodejs;%PATH% && prettier --write \"README.md\" \"templates/**/*.html\" \"static/**/*.css\" \"static/**/*.js\" \"scripts/**/*.mjs\""
   },
   "devDependencies": {
-    "playwright": "^1.58.2",
     "prettier": "^3.8.1"
   }
 }
