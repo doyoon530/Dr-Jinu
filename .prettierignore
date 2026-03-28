@@ -2,3 +2,5 @@ models
 uploads
 __pycache__
 node_modules
+static/*.local.js
+scripts/*.local.mjs
