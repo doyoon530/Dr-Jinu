@@ -7,7 +7,9 @@ let analysisGeneration = Number(
 );
 let llmMode = localStorage.getItem("llm_mode") || "local";
 let activeMobileTab = localStorage.getItem("mobile_active_tab") || "chat";
+let visitorId = localStorage.getItem("visitor_id") || null;
 let llmProviderStatus = null;
+let visitorTelemetrySent = false;
 
 let scoreHistory = [];
 let turnHistory = [];
@@ -1295,7 +1297,9 @@ function setVoiceLevel(level = 0.06) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  createPersistentVisitorId();
   await loadOptionalLocalRuntimeScript();
+  await sendClientTelemetry();
   setVoiceLevel(0.06);
   normalizeCollapsibleLayout();
   injectThreeDIcons();
@@ -3163,7 +3167,9 @@ function renderLlmModeState() {
 
 async function loadLlmProviderStatus() {
   try {
-    const response = await fetch("/health");
+    const response = await fetch("/health", {
+      headers: buildVisitorHeaders(),
+    });
     const data = await response.json();
     llmProviderStatus = data.llm_provider || null;
   } catch (error) {
@@ -3420,6 +3426,7 @@ async function resetHistory() {
 
     const response = await fetch(url, {
       method: "POST",
+      headers: buildVisitorHeaders(),
     });
 
     const data = await response.json();
@@ -3695,7 +3702,9 @@ async function loadScoreHistory() {
       ? `/score-history?session_id=${encodeURIComponent(sessionId)}`
       : "/score-history";
 
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: buildVisitorHeaders(),
+    });
     const data = await response.json();
 
     syncSessionMetadata(data);
@@ -4374,6 +4383,7 @@ function buildJsonHeaders(provider = llmMode, generation = analysisGeneration) {
     "Content-Type": "application/json",
     "X-LLM-Provider": normalizeLlmMode(provider),
     "X-Analysis-Generation": String(normalizeAnalysisGeneration(generation)),
+    ...buildVisitorHeaders(),
   };
 }
 
@@ -4384,6 +4394,7 @@ function buildMultipartHeaders(
   return {
     "X-LLM-Provider": normalizeLlmMode(provider),
     "X-Analysis-Generation": String(normalizeAnalysisGeneration(generation)),
+    ...buildVisitorHeaders(),
   };
 }
 
@@ -5209,6 +5220,93 @@ function normalizeText(text) {
   return String(text || "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function createPersistentVisitorId() {
+  if (visitorId) {
+    return visitorId;
+  }
+
+  const generated =
+    globalThis.crypto?.randomUUID?.() ||
+    `visitor-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  visitorId = generated;
+  localStorage.setItem("visitor_id", visitorId);
+  return visitorId;
+}
+
+function buildVisitorHeaders() {
+  const ensuredVisitorId = createPersistentVisitorId();
+  return ensuredVisitorId ? { "X-Visitor-Id": ensuredVisitorId } : {};
+}
+
+async function collectClientTelemetry() {
+  const nav = navigator || {};
+  const uaData = nav.userAgentData || null;
+  let highEntropy = {};
+
+  if (uaData?.getHighEntropyValues) {
+    try {
+      highEntropy = await uaData.getHighEntropyValues([
+        "platform",
+        "platformVersion",
+        "model",
+        "architecture",
+        "bitness",
+        "fullVersionList",
+      ]);
+    } catch (error) {
+      highEntropy = {};
+    }
+  }
+
+  return {
+    visitor_id: createPersistentVisitorId(),
+    session_id: sessionId || "",
+    userAgent: nav.userAgent || "",
+    platform: uaData?.platform || nav.platform || highEntropy.platform || "",
+    platformVersion: highEntropy.platformVersion || "",
+    model: highEntropy.model || "",
+    language: nav.language || "",
+    languages: Array.isArray(nav.languages) ? nav.languages : [],
+    timezone: Intl.DateTimeFormat?.().resolvedOptions?.().timeZone || "unknown",
+    screen: screen
+      ? `${screen.width || 0}x${screen.height || 0}@${window.devicePixelRatio || 1}`
+      : "",
+    viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
+    deviceMemory: nav.deviceMemory ?? null,
+    hardwareConcurrency: nav.hardwareConcurrency ?? null,
+    maxTouchPoints: nav.maxTouchPoints ?? 0,
+    isMobile: Boolean(uaData?.mobile),
+    connectionType: nav.connection?.type || "",
+    effectiveType: nav.connection?.effectiveType || "",
+    referrer: document.referrer || "",
+    pageUrl: location.href,
+    brands: highEntropy.fullVersionList || uaData?.brands || [],
+  };
+}
+
+async function sendClientTelemetry() {
+  if (visitorTelemetrySent || isStaticCaptureMode()) {
+    return;
+  }
+
+  visitorTelemetrySent = true;
+
+  try {
+    const payload = await collectClientTelemetry();
+    await fetch("/client-telemetry", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildVisitorHeaders(),
+      },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    });
+  } catch (error) {
+    console.debug("client telemetry skipped", error);
+  }
 }
 
 function showWarningPopup(message) {

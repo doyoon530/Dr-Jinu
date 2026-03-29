@@ -4,3 +4,4 @@ __pycache__
 node_modules
 static/*.local.js
 scripts/*.local.mjs
+templates/admin_visitors.html

@@ -1,3 +1,4 @@
+from collections import deque
 from threading import Lock
 
 
@@ -20,3 +21,7 @@ speech_client = None
 temp_google_credentials_path = None
 analysis_runtime_cache = {}
 analysis_llm_lock = Lock()
+visitor_lock = Lock()
+visitor_event_store = deque(maxlen=300)
+visitor_snapshot_store = {}
+visitor_hostname_cache = {}

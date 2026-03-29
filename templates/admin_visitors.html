@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dr.지누 방문자 로그</title>
+    <style>
+      :root {
+        --bg: #07111f;
+        --panel: rgba(13, 22, 39, 0.88);
+        --panel-strong: rgba(18, 29, 50, 0.92);
+        --stroke: rgba(185, 184, 187, 0.14);
+        --text-main: #edf4ff;
+        --text-sub: #b5becc;
+        --text-muted: #7e8797;
+        --accent: #1897d1;
+        --accent-soft: #8ddfff;
+        --warning: #c5b47b;
+        --success: #2fd18b;
+        --danger: #ff7b7b;
+        --radius-xl: 28px;
+        --radius-lg: 22px;
+        --radius-md: 16px;
+        --shadow-lg: 0 28px 90px rgba(0, 0, 0, 0.42);
+        --shadow-md: 0 16px 42px rgba(0, 0, 0, 0.24);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 28px;
+        font-family:
+          "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        color: var(--text-main);
+        background:
+          radial-gradient(
+            circle at 12% 10%,
+            rgba(24, 151, 209, 0.2),
+            transparent 24%
+          ),
+          radial-gradient(
+            circle at 88% 8%,
+            rgba(197, 180, 123, 0.16),
+            transparent 20%
+          ),
+          linear-gradient(155deg, #081120 0%, #040914 45%, #02060d 100%);
+      }
+
+      .page {
+        max-width: 1440px;
+        margin: 0 auto;
+        display: grid;
+        gap: 20px;
+      }
+
+      .hero {
+        padding: 28px 30px;
+        border-radius: var(--radius-xl);
+        border: 1px solid var(--stroke);
+        background: linear-gradient(
+          160deg,
+          rgba(19, 34, 58, 0.92),
+          rgba(8, 15, 29, 0.96)
+        );
+        box-shadow: var(--shadow-lg);
+      }
+
+      .hero-kicker {
+        color: var(--accent-soft);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 12px;
+      }
+
+      .hero-title {
+        margin: 0 0 12px;
+        font-size: 40px;
+        line-height: 1.08;
+      }
+
+      .hero-copy {
+        max-width: 900px;
+        color: var(--text-sub);
+        line-height: 1.65;
+      }
+
+      .hero-actions {
+        margin-top: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(141, 223, 255, 0.16);
+        background: rgba(13, 24, 42, 0.6);
+        color: var(--text-sub);
+        font-size: 13px;
+      }
+
+      .pill strong {
+        color: var(--text-main);
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--stroke);
+        background: var(--panel);
+        box-shadow: var(--shadow-md);
+      }
+
+      .metric-card {
+        padding: 22px 22px 20px;
+      }
+
+      .metric-label {
+        color: var(--text-muted);
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+
+      .metric-value {
+        font-size: 36px;
+        font-weight: 800;
+        line-height: 1;
+      }
+
+      .metric-sub {
+        margin-top: 10px;
+        color: var(--text-sub);
+        font-size: 13px;
+      }
+
+      .content-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+        gap: 20px;
+      }
+
+      .section-card {
+        padding: 22px;
+      }
+
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .section-title {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .section-kicker {
+        color: var(--warning);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .toolbar a,
+      .toolbar button {
+        appearance: none;
+        border: 1px solid rgba(141, 223, 255, 0.16);
+        background: rgba(13, 24, 42, 0.62);
+        color: var(--text-main);
+        padding: 10px 14px;
+        border-radius: 12px;
+        text-decoration: none;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .table-wrap {
+        overflow: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 900px;
+      }
+
+      th,
+      td {
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        background: rgba(19, 31, 53, 0.96);
+        color: var(--text-sub);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      tbody tr:hover {
+        background: rgba(141, 223, 255, 0.04);
+      }
+
+      .visitor-title {
+        font-weight: 800;
+        margin-bottom: 4px;
+      }
+
+      .meta-line {
+        color: var(--text-sub);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .mono {
+        font-family: "Consolas", "SFMono-Regular", monospace;
+        font-size: 13px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        background: rgba(24, 151, 209, 0.12);
+        color: var(--accent-soft);
+        border: 1px solid rgba(24, 151, 209, 0.18);
+      }
+
+      .badge.warning {
+        background: rgba(197, 180, 123, 0.12);
+        color: #f3df9b;
+        border-color: rgba(197, 180, 123, 0.22);
+      }
+
+      .badge.success {
+        background: rgba(47, 209, 139, 0.12);
+        color: #a9f6d1;
+        border-color: rgba(47, 209, 139, 0.22);
+      }
+
+      .info-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .info-item {
+        padding: 16px 18px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: var(--panel-strong);
+      }
+
+      .info-item strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .empty-state {
+        padding: 26px;
+        border-radius: 18px;
+        border: 1px dashed rgba(255, 255, 255, 0.12);
+        color: var(--text-sub);
+        text-align: center;
+      }
+
+      @media (max-width: 1100px) {
+        body {
+          padding: 18px;
+        }
+
+        .summary-grid,
+        .content-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-title {
+          font-size: 32px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <section class="hero">
+        <div class="hero-kicker">Admin / Visitors</div>
+        <h1 class="hero-title">Dr.지누 방문자 로그</h1>
+        <div class="hero-copy">
+          현재 서버에 접속한 사용자 정보를 최근 방문 흐름 기준으로 정리한 관리자
+          화면이다. 실제 IP, 브라우저, 운영체제, 추정 기기 유형, 화면 정보, 최근
+          접근 경로를 한곳에서 확인할 수 있다.
+        </div>
+        <div class="hero-actions">
+          <span class="pill"
+            ><strong>생성 시각</strong> {{ payload.generated_at }}</span
+          >
+          <span class="pill"
+            ><strong>표시 개수</strong> 최근 {{ limit }}건</span
+          >
+          <span class="pill"
+            ><strong>JSON</strong>
+            <a
+              href="/admin/visitors?format=json&limit={{ limit }}"
+              style="color: inherit"
+              >/admin/visitors?format=json</a
+            ></span
+          >
+        </div>
+      </section>
+
+      <section class="summary-grid">
+        <article class="card metric-card">
+          <div class="metric-label">Known Visitors</div>
+          <div class="metric-value">{{ payload.total_known_visitors }}</div>
+          <div class="metric-sub">현재까지 식별된 방문자 수</div>
+        </article>
+        <article class="card metric-card">
+          <div class="metric-label">Recent Events</div>
+          <div class="metric-value">{{ payload.total_recent_events }}</div>
+          <div class="metric-sub">최근 기록된 요청 이벤트 수</div>
+        </article>
+        <article class="card metric-card">
+          <div class="metric-label">Route</div>
+          <div class="metric-value mono">/admin/visitors</div>
+          <div class="metric-sub">HTML 관리자 화면</div>
+        </article>
+        <article class="card metric-card">
+          <div class="metric-label">Data Mode</div>
+          <div class="metric-value mono">?format=json</div>
+          <div class="metric-sub">JSON 원본 응답 확인</div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="card section-card">
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">Visitors</div>
+              <h2 class="section-title">최근 방문자</h2>
+            </div>
+            <div class="toolbar">
+              <a href="/admin/visitors?limit={{ limit }}">새로고침</a>
+              <a href="/admin/visitors?format=json&limit={{ limit }}"
+                >JSON 보기</a
+              >
+            </div>
+          </div>
+
+          {% if payload.visitors %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Visitor</th>
+                  <th>Network</th>
+                  <th>Device</th>
+                  <th>Context</th>
+                  <th>Activity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for visitor in payload.visitors %}
+                <tr>
+                  <td>
+                    <div class="visitor-title">
+                      {{ visitor.device_name or "Unknown Device" }}
+                    </div>
+                    <div class="meta-line mono">{{ visitor.visitor_id }}</div>
+                    <div class="meta-line">
+                      Session: {{ visitor.session_id or "-" }}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="meta-line">
+                      <strong>IP</strong>
+                      <span class="mono">{{ visitor.ip }}</span>
+                    </div>
+                    <div class="meta-line">
+                      <strong>Hostname</strong> {{ visitor.hostname or "-" }}
+                    </div>
+                    <div class="meta-line">
+                      <strong>Source</strong> {{ visitor.ip_source }}
+                    </div>
+                    {% if visitor.cf_ip_country %}
+                    <div class="meta-line">
+                      <strong>Country</strong> {{ visitor.cf_ip_country }}
+                    </div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <div class="meta-line">
+                      <strong
+                        >{{ visitor.browser or "Unknown Browser" }}</strong
+                      >
+                    </div>
+                    <div class="meta-line">
+                      {{ visitor.operating_system or "Unknown OS" }} · {{
+                      visitor.device_type or "unknown" }}
+                    </div>
+                    <div class="meta-line">
+                      {{ visitor.language or "-" }} · {{ visitor.timezone or "-"
+                      }}
+                    </div>
+                    <div class="meta-line">
+                      {{ visitor.screen or "-" }} / {{ visitor.viewport or "-"
+                      }}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="meta-line">
+                      <strong>Last Page</strong> {{ visitor.page_url or
+                      visitor.last_path or "-" }}
+                    </div>
+                    <div class="meta-line">
+                      <strong>Referrer</strong> {{ visitor.referrer or "-" }}
+                    </div>
+                    {% if visitor.connection_type or visitor.effective_type %}
+                    <div class="meta-line">
+                      <strong>Network</strong> {{ visitor.connection_type or "-"
+                      }} · {{ visitor.effective_type or "-" }}
+                    </div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <div class="meta-line">
+                      <strong>Last Seen</strong> {{ visitor.last_seen }}
+                    </div>
+                    <div class="meta-line">
+                      <strong>First Seen</strong> {{ visitor.first_seen }}
+                    </div>
+                    <div class="meta-line">
+                      <strong>Visits</strong> {{ visitor.visit_count }}
+                    </div>
+                    <div class="meta-line">
+                      <strong>Recent Paths</strong> {{ (visitor.recent_paths or
+                      [])|join(", ") or "-" }}
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state">아직 기록된 방문자 정보가 없다.</div>
+          {% endif %}
+        </article>
+
+        <article class="card section-card">
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">Events</div>
+              <h2 class="section-title">최근 요청 이벤트</h2>
+            </div>
+          </div>
+
+          {% if payload.recent_events %}
+          <div class="info-list">
+            {% for event in payload.recent_events[:12] %}
+            <div class="info-item">
+              <strong
+                >{{ event.timestamp }} · {{ event.method }} {{ event.path
+                }}</strong
+              >
+              <div class="meta-line">
+                {{ event.device_name or "Unknown Device" }} · {{ event.browser
+                or "-" }} · {{ event.operating_system or "-" }}
+              </div>
+              <div class="meta-line">
+                <span class="mono">{{ event.ip }}</span>{% if event.hostname %}
+                · {{ event.hostname }}{% endif %}
+              </div>
+              <div class="meta-line">
+                {{ event.language or "-" }} · {{ event.viewport or "-" }}{% if
+                event.connection_type or event.effective_type %} · {{
+                event.connection_type or "-" }} / {{ event.effective_type or "-"
+                }}{% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="empty-state">아직 기록된 요청 이벤트가 없다.</div>
+          {% endif %}
+        </article>
+      </section>
+    </div>
+  </body>
+</html>

@@ -14,7 +14,15 @@ from .analysis_service import (
     get_response_from_llama,
     normalize_role_results_payload,
 )
-from .common import normalize_text
+from .common import (
+    build_device_name,
+    extract_client_ip_info,
+    infer_browser,
+    infer_device_type,
+    infer_operating_system,
+    normalize_text,
+    safe_reverse_dns,
+)
 from .config import UPLOAD_DIR, normalize_role_key
 from .history_service import (
     add_score_history,
@@ -50,9 +58,237 @@ conversation_store = runtime.conversation_store
 recall_store = runtime.recall_store
 score_store = runtime.score_store
 turn_store = runtime.turn_store
+visitor_event_store = runtime.visitor_event_store
+visitor_hostname_cache = runtime.visitor_hostname_cache
+visitor_lock = runtime.visitor_lock
+visitor_snapshot_store = runtime.visitor_snapshot_store
 
 
 def register_routes(app: Flask) -> None:
+    def should_track_request(path: str) -> bool:
+        if not path:
+            return False
+        if path.startswith("/static/"):
+            return False
+        if path in {"/favicon.ico"}:
+            return False
+        return True
+
+    def resolve_hostname(ip_address: str) -> str:
+        ip = normalize_text(ip_address)
+        if not ip or ip == "unknown":
+            return ""
+
+        with visitor_lock:
+            cached = visitor_hostname_cache.get(ip)
+        if cached is not None:
+            return cached
+
+        hostname = safe_reverse_dns(ip)
+        with visitor_lock:
+            visitor_hostname_cache[ip] = hostname
+        return hostname
+
+    def normalize_client_telemetry(raw_payload: dict | None) -> dict:
+        payload = raw_payload or {}
+        browser_brands = payload.get("brands") or []
+
+        if isinstance(browser_brands, list):
+            brands = [
+                normalize_text(item.get("brand", ""))
+                for item in browser_brands
+                if isinstance(item, dict)
+            ]
+        else:
+            brands = []
+
+        return {
+            "platform": normalize_text(payload.get("platform", "")),
+            "platform_version": normalize_text(payload.get("platformVersion", "")),
+            "model": normalize_text(payload.get("model", "")),
+            "language": normalize_text(payload.get("language", "")),
+            "languages": [
+                normalize_text(item)
+                for item in (payload.get("languages") or [])
+                if normalize_text(item)
+            ],
+            "timezone": normalize_text(payload.get("timezone", "")),
+            "screen": normalize_text(payload.get("screen", "")),
+            "viewport": normalize_text(payload.get("viewport", "")),
+            "device_memory": payload.get("deviceMemory"),
+            "hardware_concurrency": payload.get("hardwareConcurrency"),
+            "max_touch_points": payload.get("maxTouchPoints"),
+            "is_mobile": bool(payload.get("isMobile")),
+            "connection_type": normalize_text(payload.get("connectionType", "")),
+            "effective_type": normalize_text(payload.get("effectiveType", "")),
+            "referrer": normalize_text(payload.get("referrer", "")),
+            "page_url": normalize_text(payload.get("pageUrl", "")),
+            "user_agent": normalize_text(payload.get("userAgent", "")),
+            "brands": [brand for brand in brands if brand],
+        }
+
+    def get_request_session_id() -> str:
+        query_session_id = normalize_text(request.args.get("session_id", ""))
+        body = request.get_json(silent=True) or {}
+        body_session_id = normalize_text(body.get("session_id", ""))
+        return query_session_id or body_session_id
+
+    def build_request_visitor_context() -> dict:
+        ip_info = extract_client_ip_info(request)
+        user_agent = normalize_text(request.headers.get("User-Agent", ""))
+        visitor_id = normalize_text(request.headers.get("X-Visitor-Id", ""))
+        session_id = get_request_session_id()
+        snapshot_key = visitor_id or uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{ip_info['ip']}|{user_agent[:120]}",
+        ).hex[:16]
+
+        with visitor_lock:
+            snapshot = dict(visitor_snapshot_store.get(snapshot_key, {}))
+            telemetry = dict(snapshot.get("telemetry", {}))
+
+        platform_hint = telemetry.get("platform", "")
+        max_touch_points = telemetry.get("max_touch_points")
+        is_mobile_hint = telemetry.get("is_mobile")
+
+        browser = infer_browser(user_agent or telemetry.get("user_agent", ""))
+        operating_system = infer_operating_system(
+            user_agent or telemetry.get("user_agent", ""),
+            platform_hint=platform_hint,
+        )
+        device_type = infer_device_type(
+            user_agent or telemetry.get("user_agent", ""),
+            is_mobile_hint=is_mobile_hint,
+            max_touch_points=max_touch_points,
+        )
+        hostname = resolve_hostname(ip_info["ip"])
+        model = normalize_text(telemetry.get("model", ""))
+        device_name = build_device_name(
+            browser=browser,
+            operating_system=operating_system,
+            hostname=hostname,
+            model=model,
+        )
+
+        return {
+            "visitor_id": snapshot_key,
+            "session_id": session_id or snapshot.get("session_id", ""),
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "path": request.path,
+            "method": request.method,
+            "ip": ip_info["ip"],
+            "ip_source": ip_info["source"],
+            "remote_addr": ip_info["remote_addr"],
+            "forwarded_chain": ip_info["forwarded_chain"],
+            "hostname": hostname,
+            "browser": browser,
+            "operating_system": operating_system,
+            "device_type": device_type,
+            "device_name": device_name,
+            "user_agent": user_agent,
+            "cf_ip_country": normalize_text(request.headers.get("CF-IPCountry", "")),
+            "cf_ray": normalize_text(request.headers.get("CF-Ray", "")),
+            "telemetry": telemetry,
+            "referrer": telemetry.get("referrer", ""),
+            "page_url": telemetry.get("page_url", ""),
+            "language": telemetry.get("language", ""),
+            "screen": telemetry.get("screen", ""),
+            "viewport": telemetry.get("viewport", ""),
+            "timezone": telemetry.get("timezone", ""),
+            "connection_type": telemetry.get("connection_type", ""),
+            "effective_type": telemetry.get("effective_type", ""),
+        }
+
+    def record_visitor_event(context: dict) -> None:
+        snapshot_key = context["visitor_id"]
+        timestamp = context["timestamp"]
+        path = context["path"]
+
+        with visitor_lock:
+            existing = dict(visitor_snapshot_store.get(snapshot_key, {}))
+            path_history = list(existing.get("recent_paths", []))
+            path_history.append(path)
+            path_history = path_history[-8:]
+            visit_count = int(existing.get("visit_count", 0)) + 1
+
+            snapshot = {
+                **existing,
+                "visitor_id": snapshot_key,
+                "session_id": context.get("session_id", "") or existing.get("session_id", ""),
+                "first_seen": existing.get("first_seen", timestamp),
+                "last_seen": timestamp,
+                "visit_count": visit_count,
+                "last_path": path,
+                "recent_paths": path_history,
+                "ip": context["ip"],
+                "ip_source": context["ip_source"],
+                "remote_addr": context["remote_addr"],
+                "forwarded_chain": context["forwarded_chain"],
+                "hostname": context["hostname"],
+                "browser": context["browser"],
+                "operating_system": context["operating_system"],
+                "device_type": context["device_type"],
+                "device_name": context["device_name"],
+                "user_agent": context["user_agent"],
+                "cf_ip_country": context["cf_ip_country"],
+                "cf_ray": context["cf_ray"],
+                "telemetry": context.get("telemetry", existing.get("telemetry", {})),
+                "referrer": context.get("referrer", existing.get("referrer", "")),
+                "page_url": context.get("page_url", existing.get("page_url", "")),
+                "language": context.get("language", existing.get("language", "")),
+                "screen": context.get("screen", existing.get("screen", "")),
+                "viewport": context.get("viewport", existing.get("viewport", "")),
+                "timezone": context.get("timezone", existing.get("timezone", "")),
+                "connection_type": context.get(
+                    "connection_type", existing.get("connection_type", "")
+                ),
+                "effective_type": context.get(
+                    "effective_type", existing.get("effective_type", "")
+                ),
+            }
+            visitor_snapshot_store[snapshot_key] = snapshot
+            visitor_event_store.append(
+                {
+                    "timestamp": timestamp,
+                    "visitor_id": snapshot_key,
+                    "session_id": snapshot["session_id"],
+                    "method": context["method"],
+                    "path": path,
+                    "ip": context["ip"],
+                    "ip_source": context["ip_source"],
+                    "hostname": context["hostname"],
+                    "browser": context["browser"],
+                    "operating_system": context["operating_system"],
+                    "device_type": context["device_type"],
+                    "device_name": context["device_name"],
+                    "language": context.get("language", ""),
+                    "screen": context.get("screen", ""),
+                    "viewport": context.get("viewport", ""),
+                    "timezone": context.get("timezone", ""),
+                    "connection_type": context.get("connection_type", ""),
+                    "effective_type": context.get("effective_type", ""),
+                    "referrer": context.get("referrer", ""),
+                    "page_url": context.get("page_url", ""),
+                    "cf_ip_country": context["cf_ip_country"],
+                    "cf_ray": context["cf_ray"],
+                    "user_agent": context["user_agent"],
+                }
+            )
+
+        app.logger.info(
+            "VISITOR %s %s %s ip=%s source=%s device=%s browser=%s os=%s host=%s session=%s",
+            timestamp,
+            context["method"],
+            path,
+            context["ip"],
+            context["ip_source"],
+            context["device_name"],
+            context["browser"],
+            context["operating_system"],
+            context["hostname"] or "-",
+            context.get("session_id", "") or "-",
+        )
+
     def build_stale_generation_response(session_id: str, status_code: int = 409):
         return (
             jsonify(
@@ -64,6 +300,157 @@ def register_routes(app: Flask) -> None:
                 }
             ),
             status_code,
+        )
+
+    def build_visitors_payload(limit: int) -> dict:
+        with visitor_lock:
+            visitors = sorted(
+                visitor_snapshot_store.values(),
+                key=lambda item: item.get("last_seen", ""),
+                reverse=True,
+            )
+            recent_events = list(visitor_event_store)[-limit:][::-1]
+
+        return {
+            "status": "ok",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "total_known_visitors": len(visitors),
+            "total_recent_events": len(recent_events),
+            "visitors": visitors[:limit],
+            "recent_events": recent_events,
+        }
+
+    @app.before_request
+    def track_visitor_request():
+        if not should_track_request(request.path):
+            return None
+
+        record_visitor_event(build_request_visitor_context())
+        return None
+
+    @app.route("/client-telemetry", methods=["POST"])
+    def client_telemetry():
+        payload = request.get_json(silent=True) or {}
+        raw_visitor_id = normalize_text(
+            request.headers.get("X-Visitor-Id", "") or payload.get("visitor_id", "")
+        )
+        if not raw_visitor_id:
+            return jsonify({"error": "visitor_id가 없습니다."}), 400
+
+        telemetry = normalize_client_telemetry(payload)
+        ip_info = extract_client_ip_info(request)
+        request_ip = ip_info["ip"]
+        request_user_agent = normalize_text(
+            telemetry.get("user_agent", "") or request.headers.get("User-Agent", "")
+        )
+
+        with visitor_lock:
+            merge_key = None
+            for key, snapshot in visitor_snapshot_store.items():
+                if key == raw_visitor_id:
+                    continue
+                if snapshot.get("ip") == request_ip and snapshot.get(
+                    "user_agent"
+                ) == request_user_agent:
+                    merge_key = key
+                    break
+
+            existing = dict(
+                visitor_snapshot_store.get(raw_visitor_id, {})
+                or visitor_snapshot_store.get(merge_key, {})
+            )
+            hostname = existing.get("hostname", "")
+            browser = infer_browser(telemetry.get("user_agent", ""))
+            operating_system = infer_operating_system(
+                telemetry.get("user_agent", ""),
+                platform_hint=telemetry.get("platform", ""),
+            )
+            device_type = infer_device_type(
+                telemetry.get("user_agent", ""),
+                is_mobile_hint=telemetry.get("is_mobile"),
+                max_touch_points=telemetry.get("max_touch_points"),
+            )
+            device_name = build_device_name(
+                browser=browser,
+                operating_system=operating_system,
+                hostname=hostname,
+                model=telemetry.get("model", ""),
+            )
+
+            visitor_snapshot_store[raw_visitor_id] = {
+                **existing,
+                "visitor_id": raw_visitor_id,
+                "session_id": normalize_text(payload.get("session_id", ""))
+                or existing.get("session_id", ""),
+                "ip": existing.get("ip", request_ip),
+                "ip_source": existing.get("ip_source", ip_info["source"]),
+                "remote_addr": existing.get("remote_addr", ip_info["remote_addr"]),
+                "forwarded_chain": existing.get(
+                    "forwarded_chain", ip_info["forwarded_chain"]
+                ),
+                "hostname": hostname,
+                "telemetry": telemetry,
+                "browser": browser if browser != "Unknown Browser" else existing.get("browser", browser),
+                "operating_system": operating_system
+                if operating_system != "Unknown OS"
+                else existing.get("operating_system", operating_system),
+                "device_type": device_type or existing.get("device_type", ""),
+                "device_name": device_name or existing.get("device_name", ""),
+                "language": telemetry.get("language", "") or existing.get("language", ""),
+                "screen": telemetry.get("screen", "") or existing.get("screen", ""),
+                "viewport": telemetry.get("viewport", "") or existing.get("viewport", ""),
+                "timezone": telemetry.get("timezone", "") or existing.get("timezone", ""),
+                "connection_type": telemetry.get("connection_type", "")
+                or existing.get("connection_type", ""),
+                "effective_type": telemetry.get("effective_type", "")
+                or existing.get("effective_type", ""),
+                "page_url": telemetry.get("page_url", "") or existing.get("page_url", ""),
+                "referrer": telemetry.get("referrer", "") or existing.get("referrer", ""),
+            }
+
+            if merge_key and merge_key in visitor_snapshot_store:
+                visitor_snapshot_store.pop(merge_key, None)
+                for event in list(visitor_event_store):
+                    if event.get("visitor_id") == merge_key:
+                        event["visitor_id"] = raw_visitor_id
+
+        app.logger.info(
+            "VISITOR-CLIENT visitor=%s device=%s browser=%s os=%s screen=%s viewport=%s tz=%s",
+            raw_visitor_id,
+            visitor_snapshot_store[raw_visitor_id].get("device_name", "-"),
+            visitor_snapshot_store[raw_visitor_id].get("browser", "-"),
+            visitor_snapshot_store[raw_visitor_id].get("operating_system", "-"),
+            visitor_snapshot_store[raw_visitor_id].get("screen", "-"),
+            visitor_snapshot_store[raw_visitor_id].get("viewport", "-"),
+            visitor_snapshot_store[raw_visitor_id].get("timezone", "-"),
+        )
+
+        return jsonify(
+            {
+                "status": "ok",
+                "visitor_id": raw_visitor_id,
+                "device_name": visitor_snapshot_store[raw_visitor_id].get(
+                    "device_name", ""
+                ),
+            }
+        )
+
+    @app.route("/admin/visitors", methods=["GET"])
+    def admin_visitors():
+        try:
+            limit = int(request.args.get("limit", 25) or 25)
+        except (TypeError, ValueError):
+            limit = 25
+        limit = max(1, min(limit, 200))
+        payload = build_visitors_payload(limit)
+
+        if normalize_text(request.args.get("format", "")).lower() == "json":
+            return jsonify(payload)
+
+        return render_template(
+            "admin_visitors.html",
+            payload=payload,
+            limit=limit,
         )
 
     @app.route("/")

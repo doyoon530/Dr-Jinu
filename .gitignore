@@ -198,6 +198,8 @@ uploads/
 # Local-only demo / capture assets
 static/local-runtime.local.js
 scripts/*.local.mjs
+docs/.tmp/
 docs/media/
 docs/images/demo-flow.gif
 docs/ppt-work/
+ffprobe*.log
