@@ -6,7 +6,7 @@ from datetime import datetime
 from flask import jsonify, request
 
 from . import runtime
-from .common import clamp_score, clamp_subscore, normalize_text
+from .common import clamp_score, normalize_text
 from .config import (
     ANALYSIS_CONTEXT_TURNS,
     MAX_HISTORY_TURNS,
@@ -16,19 +16,22 @@ from .config import (
     REPETITION_CONTEXT_TURNS,
     normalize_llm_provider,
 )
+from .history_repair_service import (
+    RISK_EXCLUDED,
+    calculate_confidence_from_feature_scores,
+    calculate_trend_from_score_values,
+    get_risk_level_from_score,
+    repair_turn_history_state,
+)
 
-NO_PREVIOUS_CONTEXT = "이전 대화 없음"
-RECALL_RESULT_NONE = "없음"
-RECALL_RESULT_CORRECT = "정답"
-RECALL_RESULT_INCORRECT = "오답"
-JUDGMENT_UNCERTAIN = "판단 어려움"
-JUDGMENT_NORMAL = "정상"
-JUDGMENT_SUSPECTED = "의심"
-RISK_EXCLUDED = "반영 제외"
-TREND_INSUFFICIENT = "데이터 부족"
-TREND_STABLE = "안정"
-TREND_UP = "상승"
-TREND_DOWN = "하락"
+NO_PREVIOUS_CONTEXT = "?? ?? ??"
+RECALL_RESULT_NONE = "??"
+RECALL_RESULT_CORRECT = "??"
+RECALL_RESULT_INCORRECT = "??"
+JUDGMENT_UNCERTAIN = "?? ???"
+JUDGMENT_NORMAL = "??"
+JUDGMENT_SUSPECTED = "??"
+
 
 
 def build_default_recall_state() -> dict:
@@ -252,29 +255,7 @@ def add_turn_history(
     return turn
 
 
-def calculate_trend_from_score_values(scores, window: int = RECENT_WINDOW) -> str:
-    if len(scores) < 2:
-        return TREND_INSUFFICIENT
-
-    recent = scores[-window:]
-    if len(recent) < 2:
-        return TREND_STABLE
-
-    diff = recent[-1] - recent[0]
-    if diff >= 10:
-        return TREND_UP
-    if diff <= -10:
-        return TREND_DOWN
-    return TREND_STABLE
-
-
 def repair_session_analysis_history(session_id: str) -> None:
-    from .analysis_service import (
-        infer_judgment_from_score,
-        normalize_reason_text,
-        parse_analysis_scores,
-    )
-
     turns = runtime.turn_store.get(session_id, [])
     if not turns:
         return
@@ -285,111 +266,15 @@ def repair_session_analysis_history(session_id: str) -> None:
     if runtime.repair_cache.get(session_id) == turn_count:
         return
 
-    existing_scores = runtime.score_store.get(session_id, [])
-    running_scores = []
-
-    for index, turn in enumerate(turns):
-        feature_scores = turn.get("feature_scores") or {}
-        repaired_feature_scores = {
-            "repetition": clamp_subscore(int(feature_scores.get("repetition", 0)), 25),
-            "memory": clamp_subscore(int(feature_scores.get("memory", 0)), 25),
-            "time_confusion": clamp_subscore(
-                int(feature_scores.get("time_confusion", 0)), 30
-            ),
-            "incoherence": clamp_subscore(
-                int(feature_scores.get("incoherence", 0)), 20
-            ),
-        }
-
-        current_score = clamp_score(int(turn.get("score", 0)))
-        current_subtotal = sum(repaired_feature_scores.values())
-        parsed_from_reason = parse_analysis_scores(turn.get("reason", ""))
-        score_included = turn.get("score_included")
-        if score_included is None:
-            score_included = should_include_analysis_score(
-                turn.get("judgment", ""), current_score, repaired_feature_scores
-            )
-        score_included = bool(score_included)
-
-        if (
-            score_included
-            and parsed_from_reason["total"] > 0
-            and (current_score == 0 or current_subtotal == 0)
-        ):
-            repaired_feature_scores = {
-                "repetition": parsed_from_reason["repetition"],
-                "memory": parsed_from_reason["memory"],
-                "time_confusion": parsed_from_reason["time_confusion"],
-                "incoherence": parsed_from_reason["incoherence"],
-            }
-            current_score = parsed_from_reason["total"]
-        elif (
-            score_included
-            and current_subtotal > 0
-            and current_score != clamp_score(current_subtotal)
-        ):
-            current_score = clamp_score(current_subtotal)
-
-        judgment = str(turn.get("judgment", "")).strip()
-        if judgment not in {"정상", "의심", "판단 어려움"}:
-            judgment = infer_judgment_from_score(current_score)
-        if score_included and (
-            (judgment == "정상" and current_score >= 20)
-            or (judgment == "의심" and current_score < 20)
-        ):
-            judgment = infer_judgment_from_score(current_score)
-
-        turn["feature_scores"] = repaired_feature_scores
-        turn["score"] = current_score if score_included else 0
-        turn["judgment"] = judgment
-        turn["score_included"] = score_included
-        turn["excluded_reason"] = str(
-            turn.get("excluded_reason")
-            or build_score_exclusion_reason(
-                judgment, turn["score"], turn.get("reason", ""), repaired_feature_scores
-            )
-        )
-        turn["reason"] = normalize_reason_text(
-            turn.get("reason", ""), repaired_feature_scores
-        )
-
-        if score_included:
-            turn["confidence"] = calculate_confidence_from_feature_scores(
-                repaired_feature_scores, current_score
-            )
-            turn["risk_level"] = get_risk_level_from_score(current_score)
-            running_scores.append(current_score)
-            turn["trend"] = calculate_trend_from_score_values(running_scores)
-        else:
-            turn["confidence"] = 0
-            turn["risk_level"] = RISK_EXCLUDED
-            turn["trend"] = RISK_EXCLUDED
-
-        if running_scores:
-            turn["average_score"] = round(sum(running_scores) / len(running_scores), 1)
-            recent_scores = running_scores[-RECENT_WINDOW:]
-            turn["recent_average_score"] = round(
-                sum(recent_scores) / len(recent_scores), 1
-            )
-        else:
-            turn["average_score"] = 0.0
-            turn["recent_average_score"] = 0.0
-
-    repaired_score_history = []
-    for index, turn in enumerate(turns):
-        if not turn.get("score_included", True):
-            continue
-
-        if index < len(existing_scores):
-            time_value = existing_scores[index].get("time", turn.get("time", ""))
-        else:
-            time_value = turn.get("time", "")
-
-        repaired_score_history.append(
-            {"score": clamp_score(int(turn.get("score", 0))), "time": time_value}
-        )
-
-    runtime.score_store[session_id] = deque(repaired_score_history[-MAX_SCORE_HISTORY:], maxlen=MAX_SCORE_HISTORY)
+    _, repaired_score_history = repair_turn_history_state(
+        turns,
+        runtime.score_store.get(session_id, []),
+        recent_window=RECENT_WINDOW,
+    )
+    runtime.score_store[session_id] = deque(
+        repaired_score_history[-MAX_SCORE_HISTORY:],
+        maxlen=MAX_SCORE_HISTORY,
+    )
     runtime.repair_cache[session_id] = turn_count
 
 
@@ -433,88 +318,6 @@ def get_recent_average_score(session_id: str, window: int = RECENT_WINDOW) -> fl
     recent = history[-window:]
     avg = sum(item["score"] for item in recent) / len(recent)
     return round(avg, 1)
-
-
-def calculate_confidence_from_feature_scores(
-    feature_scores: dict, total_score: int
-) -> int:
-    repetition = int(feature_scores.get("repetition", 0))
-    memory = int(feature_scores.get("memory", 0))
-    time_confusion = int(feature_scores.get("time_confusion", 0))
-    incoherence = int(feature_scores.get("incoherence", 0))
-
-    confidence = 55
-    if memory > 0:
-        confidence += 8
-    if time_confusion > 0:
-        confidence += 8
-    if repetition > 0:
-        confidence += 6
-    if incoherence > 0:
-        confidence += 6
-    if total_score >= 40:
-        confidence += 8
-    if total_score >= 60:
-        confidence += 4
-
-    return max(0, min(95, confidence))
-
-
-def has_meaningful_feature_scores(feature_scores: dict) -> bool:
-    if not isinstance(feature_scores, dict):
-        return False
-
-    return any(
-        int(feature_scores.get(key, 0)) > 0
-        for key in ["repetition", "memory", "time_confusion", "incoherence"]
-    )
-
-
-def should_include_analysis_score(
-    judgment: str, score: int, feature_scores: dict
-) -> bool:
-    normalized_judgment = str(judgment or "").strip()
-    normalized_score = clamp_score(int(score or 0))
-
-    if (
-        normalized_judgment == JUDGMENT_UNCERTAIN
-        and normalized_score == 0
-        and not has_meaningful_feature_scores(feature_scores)
-    ):
-        return False
-
-    return True
-
-
-def build_score_exclusion_reason(
-    judgment: str, score: int, reason: str, feature_scores: dict
-) -> str:
-    if should_include_analysis_score(judgment, score, feature_scores):
-        return ""
-
-    normalized_reason = str(reason or "").strip()
-    if "너무 짧아" in normalized_reason or "입력이 필요" in normalized_reason:
-        return "입력이 너무 짧아 이번 대화는 점수 통계에서 제외했습니다."
-    if "음성 인식 결과" in normalized_reason:
-        return "음성 인식 결과가 없어 이번 대화는 점수 통계에서 제외했습니다."
-    if "입력된 대화가 없습니다" in normalized_reason:
-        return "분석할 대화가 없어 이번 대화는 점수 통계에서 제외했습니다."
-    if "문제가 발생" in normalized_reason or "오류" in normalized_reason:
-        return "분석 중 오류가 발생해 이번 대화는 점수 통계에서 제외했습니다."
-
-    return "분석 결과가 불안정하여 이번 대화는 점수 통계에서 제외했습니다."
-
-
-def get_risk_level_from_score(score: float) -> str:
-    if score < 20:
-        return "Normal"
-    if score < 40:
-        return "Low Risk"
-    if score < 60:
-        return "Moderate Risk"
-    if score < 80:
-        return "High Risk"
-    return "Very High Risk"
 
 
 def get_score_trend(session_id: str, window: int = RECENT_WINDOW) -> str:
